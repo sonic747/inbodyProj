@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { InBodyRecord } from '../types';
 
 interface ScanViewProps {
@@ -25,7 +25,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [flashOn, setFlashOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
-  const [cameraLabel, setCameraLabel] = useState('카메라 준비 중...');
+  const [cameraLabel, setCameraLabel] = useState('카메라 시작 중...');
 
   // Scan & Result State
   const [isScanning, setIsScanning] = useState(false);
@@ -35,93 +35,116 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [showSamplePicker, setShowSamplePicker] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
-  // Initialize and switch camera
-  useEffect(() => {
-    let isMounted = true;
-
-    async function startCamera() {
-      // Stop previous stream
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-
-      setCameraError(null);
-      setCameraActive(false);
-
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        if (isMounted) {
-          setCameraError('이 브라우저는 웹 카메라 기능을 지원하지 않습니다.');
-          setCameraLabel('카메라 지원 안 됨');
-        }
-        return;
-      }
-
-      try {
-        // Try requested facing mode (default: rear 'environment' on phones, webcam on PC)
-        let stream: MediaStream;
+  // Safely stop stream
+  const stopCurrentStream = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: { ideal: cameraFacing },
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
-            },
-            audio: false,
-          });
+          track.stop();
         } catch {
-          // Fallback to any available video device (e.g. PC default webcam)
+          // Ignore
+        }
+      });
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  // Start Camera with robust fallback strategy
+  const startCamera = useCallback(async (facing: 'environment' | 'user') => {
+    stopCurrentStream();
+    setCameraError(null);
+    setCameraLabel('카메라 연결 시도 중...');
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError('현재 브라우저 환경에서 카메라 접근 API를 지원하지 않습니다.');
+      setCameraLabel('카메라 미지원');
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+
+    // 1st attempt: exact or ideal facing mode (rear for mobile, user for webcam)
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: facing === 'environment' ? { ideal: 'environment' } : 'user',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
+    } catch {
+      // 2nd attempt: general video with basic constraints
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facing,
+          },
+          audio: false,
+        });
+      } catch {
+        // 3rd attempt: any video stream at all (e.g. PC webcam)
+        try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: true,
             audio: false,
           });
-        }
-
-        if (!isMounted) {
-          stream.getTracks().forEach((t) => t.stop());
+        } catch (err: any) {
+          console.warn('Camera stream error:', err);
+          const isPermissionDenied =
+            err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
+          setCameraError(
+            isPermissionDenied
+              ? '카메라 권한이 차단되었습니다. 브라우저 설정에서 카메라 권한을 허용해 주세요.'
+              : '카메라 장치를 시작할 수 없습니다. 아래 갤러리 버튼으로 사진을 업로드해 보세요.'
+          );
+          setCameraLabel('카메라 접근 불가');
           return;
-        }
-
-        streamRef.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-
-        setCameraActive(true);
-
-        const videoTrack = stream.getVideoTracks()[0];
-        if (videoTrack) {
-          const trackSettings = videoTrack.getSettings?.() || {};
-          const trackCaps = (videoTrack.getCapabilities?.() as any) || {};
-
-          // Check if torch/flash is supported
-          setTorchSupported(!!trackCaps.torch);
-
-          const isEnv = trackSettings.facingMode === 'environment' || cameraFacing === 'environment';
-          setCameraLabel(isEnv ? '스마트폰 후면 카메라 활성' : '웹캠 / 전면 카메라 활성');
-        }
-      } catch (err: any) {
-        console.warn('Camera stream could not start:', err);
-        if (isMounted) {
-          setCameraActive(false);
-          setCameraError('카메라 연결 대기 중 (갤러리 업로드 또는 권한 허용 가능)');
-          setCameraLabel('카메라 연결 안 됨');
         }
       }
     }
 
-    startCamera();
+    if (!stream) return;
+
+    streamRef.current = stream;
+
+    // Attach stream to video element
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      try {
+        await videoRef.current.play();
+      } catch (playErr) {
+        console.warn('Video play error:', playErr);
+      }
+    }
+
+    setCameraActive(true);
+
+    // Inspect tracks for capabilities
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      const trackSettings = videoTrack.getSettings?.() || {};
+      const trackCaps = (videoTrack.getCapabilities?.() as any) || {};
+
+      setTorchSupported(!!trackCaps.torch);
+
+      const isEnv = trackSettings.facingMode === 'environment' || facing === 'environment';
+      setCameraLabel(isEnv ? '스마트폰 후면 카메라 활성' : '웹캠 / 전면 카메라 활성');
+    }
+  }, [stopCurrentStream]);
+
+  // Lifecycle: start on mount or facing change
+  useEffect(() => {
+    startCamera(cameraFacing);
 
     return () => {
-      isMounted = false;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
+      stopCurrentStream();
     };
-  }, [cameraFacing]);
+  }, [cameraFacing, startCamera, stopCurrentStream]);
 
   // Handle Flashlight / Torch toggle
   const toggleFlash = async () => {
@@ -144,33 +167,31 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   // Toggle between front/webcam and rear camera
   const toggleCameraFacing = () => {
-    setCameraFacing((prev) => (prev === 'environment' ? 'user' : 'environment'));
+    const next = cameraFacing === 'environment' ? 'user' : 'environment';
+    setCameraFacing(next);
   };
 
   // Capture current camera video frame
   const captureCameraFrame = () => {
-    if (!videoRef.current) {
-      triggerScanAnalysis();
-      return;
-    }
-
-    try {
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const base64 = canvas.toDataURL('image/jpeg', 0.9);
-        setSelectedImage(base64);
-        triggerScanAnalysis(base64);
-      } else {
-        triggerScanAnalysis();
+    if (videoRef.current && cameraActive) {
+      try {
+        const video = videoRef.current;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const base64 = canvas.toDataURL('image/jpeg', 0.9);
+          setSelectedImage(base64);
+          triggerScanAnalysis(base64);
+          return;
+        }
+      } catch (e) {
+        console.warn('Capture error:', e);
       }
-    } catch {
-      triggerScanAnalysis();
     }
+    triggerScanAnalysis();
   };
 
   // Handle Gallery file upload
@@ -196,7 +217,6 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
     try {
       if (customImageBase64 && !presetData) {
-        // Try calling server API
         try {
           const res = await fetch('/api/analyze-inbody', {
             method: 'POST',
@@ -217,10 +237,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
         }
       }
 
-      // Simulated realistic scanning steps
       setTimeout(() => {
         setScanStatusText('골격근-지방 지표 및 체성분 수치 추출 중...');
-      }, 700);
+      }, 600);
 
       setTimeout(() => {
         const base = presetData || {
@@ -242,7 +261,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         const record = createRecordFromParsed(base, customImageBase64);
         setIsScanning(false);
         setScannedResult(record);
-      }, 1500);
+      }, 1200);
     } catch {
       setIsScanning(false);
       setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
@@ -307,6 +326,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setScannedResult(null);
     setIsScanning(false);
     setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
+    startCamera(cameraFacing);
   };
 
   // Preset sample records for quick demo
@@ -391,7 +411,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
         <div className="text-center">
           <h1 className="text-base font-bold text-[#E2E4E9] tracking-tight">인바디 결과지 스캔</h1>
           <span className="text-[11px] text-[#60A5FA] font-medium flex items-center justify-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-ping inline-block" />
+            <span
+              className={`w-1.5 h-1.5 rounded-full inline-block ${
+                cameraActive ? 'bg-[#10B981] animate-ping' : 'bg-[#EF4444]'
+              }`}
+            />
             {cameraLabel}
           </span>
         </div>
@@ -421,46 +445,63 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
       {/* Main Viewfinder Area */}
       <main className="flex-1 relative w-full h-full bg-[#0A0B0E] overflow-hidden flex flex-col items-center justify-center">
-        {/* Real Live Video Feed */}
-        {cameraActive && !selectedImage && (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-        )}
+        {/* Real Live Video Feed - Always present in DOM to ensure immediate track binding */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+            cameraActive && !selectedImage ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+        />
 
         {/* Uploaded Image or Fallback Background */}
         {selectedImage && (
           <img
             src={selectedImage}
             alt="스캔된 인바디 이미지"
-            className="absolute inset-0 w-full h-full object-contain bg-[#0A0B0E] transition-all duration-300"
+            className="absolute inset-0 w-full h-full object-contain bg-[#0A0B0E] transition-all duration-300 z-10"
           />
         )}
 
         {/* Fallback image when camera is off/error */}
         {!cameraActive && !selectedImage && (
           <div
-            className="absolute inset-0 w-full h-full bg-cover bg-center opacity-40 mix-blend-luminosity"
+            className="absolute inset-0 w-full h-full bg-cover bg-center opacity-30 mix-blend-luminosity"
             style={{
               backgroundImage: `url('${SAMPLE_SHEET_BG}')`,
             }}
           />
         )}
 
-        {/* Camera Permission / Error Notification banner if camera fails */}
+        {/* Camera Permission / Error Notification banner & Manual Trigger */}
         {cameraError && !selectedImage && (
           <div className="absolute top-16 z-20 px-4 w-full max-w-sm">
-            <div className="bg-[#12141C]/95 border border-[#F59E0B]/40 p-3 rounded-2xl backdrop-blur-md shadow-xl text-center">
-              <p className="text-xs text-[#F59E0B] font-semibold mb-1">
+            <div className="bg-[#12141C]/95 border border-[#F59E0B]/50 p-4 rounded-2xl backdrop-blur-md shadow-2xl text-center space-y-3">
+              <div className="flex items-center justify-center gap-1.5 text-[#F59E0B] font-bold text-xs">
+                <span className="material-symbols-outlined text-[18px]">videocam_off</span>
+                <span>카메라 접근 필요</span>
+              </div>
+              <p className="text-[11px] text-[#9CA3AF] leading-relaxed">
                 {cameraError}
               </p>
-              <p className="text-[11px] text-[#9CA3AF]">
-                하단의 <b>[갤러리]</b> 버튼을 눌러 결과지 사진을 올리거나 바로 샘플 데이터를 사용할 수 있습니다.
-              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => startCamera(cameraFacing)}
+                  className="flex-1 py-2 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[16px]">videocam</span>
+                  카메라 다시 켜기
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] font-bold text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[16px]">photo_library</span>
+                  갤러리 사진 선택
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -742,6 +783,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
             <ul className="text-xs text-[#9CA3AF] space-y-2.5 list-disc pl-4 leading-relaxed">
               <li>스마트폰 후면 카메라 및 PC 웹캠을 모두 지원합니다.</li>
               <li>상단의 카메라 전환 버튼으로 전면/후면/웹캠을 바꿀 수 있습니다.</li>
+              <li>카메라 권한 팝업이 뜨면 <b>[허용]</b>을 눌러주세요.</li>
               <li>어두운 곳에서는 하단의 <b>플래시</b> 버튼을 켜주세요.</li>
               <li><b>갤러리</b> 버튼을 누르면 이미 찍어둔 사진을 즉시 분석합니다.</li>
               <li>스캔 후 언제든 수치를 직접 수정하고 저장할 수 있습니다.</li>
