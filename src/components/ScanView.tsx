@@ -186,17 +186,54 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setCameraFacing(next);
   };
 
-  // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions
-  // Client-Side Image Resizer & Optimizer for High-Resolution Smartphone Photos
-  const compressImageFile = (file: File): Promise<{ base64: string; width: number; height: number }> => {
+  // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions with EXIF orientation correction
+  const compressImageFile = async (file: File): Promise<{ base64: string; width: number; height: number }> => {
+    const maxDimension = 2400;
+
+    // Method 1: Modern createImageBitmap with native EXIF orientation correction (iOS Safari, Android Chrome)
+    if (typeof createImageBitmap !== 'undefined') {
+      try {
+        const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' } as any);
+        let width = bitmap.width;
+        let height = bitmap.height;
+        const origWidth = width;
+        const origHeight = height;
+
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(bitmap, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.92);
+          if (typeof bitmap.close === 'function') bitmap.close();
+          return { base64: compressed, width: origWidth, height: origHeight };
+        }
+      } catch (bitmapErr) {
+        console.warn('createImageBitmap with orientation failed, falling back to standard loader:', bitmapErr);
+      }
+    }
+
+    // Method 2: Standard Image loading fallback
     return new Promise((resolve) => {
       const objectUrl = URL.createObjectURL(file);
       const img = new Image();
 
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
-        // Retain high resolution up to 2400px so small numbers and decimals in InBody tables are preserved clearly
-        const maxDimension = 2400;
         let width = img.naturalWidth || img.width;
         let height = img.naturalHeight || img.height;
         const origWidth = width;
