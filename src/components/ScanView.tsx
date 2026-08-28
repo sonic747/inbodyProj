@@ -187,6 +187,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   };
 
   // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions
+  // Client-Side Image Resizer & Optimizer for High-Resolution Smartphone Photos
   const compressImageFile = (file: File): Promise<{ base64: string; width: number; height: number }> => {
     return new Promise((resolve) => {
       const objectUrl = URL.createObjectURL(file);
@@ -194,9 +195,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
       img.onload = () => {
         URL.revokeObjectURL(objectUrl);
-        const maxDimension = 1800;
-        let width = img.width;
-        let height = img.height;
+        // Retain high resolution up to 2400px so small numbers and decimals in InBody tables are preserved clearly
+        const maxDimension = 2400;
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
         const origWidth = width;
         const origHeight = height;
 
@@ -216,8 +218,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
         const ctx = canvas.getContext('2d');
 
         if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.88);
+          const compressed = canvas.toDataURL('image/jpeg', 0.92);
           resolve({ base64: compressed, width: origWidth, height: origHeight });
         } else {
           const reader = new FileReader();
@@ -494,39 +498,30 @@ export const ScanView: React.FC<ScanViewProps> = ({
           clearTimeout(timeoutId);
           if (progressTimer) clearInterval(progressTimer);
 
-          if (res.ok) {
-            const parsed = await res.json();
-            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
-              setScanProgress(100);
-              const record = createRecordFromParsed(parsed, imageToAnalyze);
-              setIsScanning(false);
-              setScannedResult(record);
-              return;
-            }
+          const parsed = await res.json().catch(() => ({}));
 
-            if (parsed && parsed.isValidInBody !== false) {
-              setScanProgress(100);
-              const record = createRecordFromParsed(parsed, imageToAnalyze);
-              setIsScanning(false);
-              setScannedResult(record);
-              return;
-            }
+          if (res.ok && parsed && parsed.isValidInBody !== false && typeof parsed.weight === 'number' && parsed.weight > 0) {
+            setScanProgress(100);
+            const record = createRecordFromParsed(parsed, imageToAnalyze);
+            setIsScanning(false);
+            setScannedResult(record);
+            return;
           }
 
-          // Fallback to record preview so user can review and edit directly without being blocked
-          const fallbackData = await res.json().catch(() => ({}));
-          setScanProgress(100);
-          const record = createRecordFromParsed(fallbackData || {}, imageToAnalyze);
+          // If the AI flagged it as not a valid InBody sheet or OCR failed to read metrics:
           setIsScanning(false);
-          setScannedResult(record);
+          setScanError(
+            parsed?.error ||
+              '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.'
+          );
           return;
-        } catch (fetchErr) {
-          console.warn('OCR fetch error or timeout, utilizing baseline parse:', fetchErr);
+        } catch (fetchErr: any) {
+          console.warn('OCR fetch error or timeout:', fetchErr);
           if (progressTimer) clearInterval(progressTimer);
-          setScanProgress(100);
-          const fallbackRecord = createRecordFromParsed({}, imageToAnalyze);
           setIsScanning(false);
-          setScannedResult(fallbackRecord);
+          setScanError(
+            '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
+          );
           return;
         }
       }
@@ -1133,9 +1128,20 @@ export const ScanView: React.FC<ScanViewProps> = ({
         {/* VIEW 4: Invalid Scan / Error Modal                                       */}
         {/* ========================================================================= */}
         {scanError && (
-          <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-[#12141C] border border-[#EF4444]/40 rounded-3xl p-5 w-full max-w-md shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-center gap-3">
+          <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-[#12141C] border border-[#EF4444]/40 rounded-3xl p-5 w-full max-w-md shadow-2xl space-y-4 animate-in zoom-in-95 duration-200 relative">
+              <button
+                onClick={() => {
+                  setScanError(null);
+                  setIsScanning(false);
+                }}
+                className="absolute top-4 right-4 text-[#9CA3AF] hover:text-white p-1 rounded-lg transition-colors"
+                aria-label="닫기"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+
+              <div className="flex items-center gap-3 pr-8">
                 <div className="w-12 h-12 rounded-2xl bg-[#EF4444]/15 border border-[#EF4444]/30 flex items-center justify-center text-[#EF4444] shrink-0">
                   <span className="material-symbols-outlined text-[28px]">document_scanner</span>
                 </div>
