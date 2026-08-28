@@ -680,7 +680,13 @@ export const ScanView: React.FC<ScanViewProps> = ({
           let errorMsg = parsed?.error;
           if (!errorMsg) {
             if (res.status === 405) {
-              errorMsg = '모바일 웹뷰에서 API 접근이 제한되었습니다 (HTTP 405). 다시 시도해주세요.';
+              const currentOrigin = window.location.origin;
+              if (currentOrigin.includes('vercel.app')) {
+                errorMsg =
+                  'Vercel 배포 환경에서 API 라우트(/api/analyze-inbody)가 구성되지 않아 405 에러가 발생했습니다. AI Studio 원본 주소에서 접속하시거나 Vercel 설정을 확인해주세요.';
+              } else {
+                errorMsg = '모바일 웹뷰에서 API 접근이 제한되었습니다 (HTTP 405). 잠시 후 다시 시도해주세요.';
+              }
             } else if (res.status === 500) {
               errorMsg = '서버 AI 분석 중 일시적 오류가 발생했습니다. 다시 시도해주세요.';
             } else {
