@@ -123,10 +123,10 @@ export default function App() {
           onOpenProfile={() => setActiveTab('settings')}
           title={
             activeTab === 'history'
-              ? 'InBody Analytics'
+              ? '스윙짐 인바디 기록'
               : activeTab === 'settings'
-              ? '인바디 설정'
-              : '인바디 분석'
+              ? '스윙짐 인바디 설정'
+              : '스윙짐 인바디'
           }
         />
       )}

@@ -10,7 +10,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   userProfile,
   onOpenProfile,
-  title = '인바디 분석',
+  title = '스윙짐 인바디',
 }) => {
   return (
     <header className="sticky top-0 bg-[#0D0F16]/95 backdrop-blur-md border-b border-[#2A2D35] flex justify-between items-center w-full px-4 sm:px-6 py-2.5 z-40 h-16">

@@ -1,5 +1,5 @@
 {
-  "name": "인바디 분석 (InBody Analytics)",
+  "name": "스윙짐 인바디 (SwingGym InBody)",
   "description": "인바디(InBody) 결과지 스캔, 체성분 분석, 체중/골격근량/체지방 추세 트렌드 차트 및 기록 관리 앱",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
