@@ -28,11 +28,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [torchSupported, setTorchSupported] = useState(false);
   const [cameraLabel, setCameraLabel] = useState('카메라 연결 중...');
 
+  // Photo & Preview State (User inspects photo BEFORE running AI OCR)
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [imageMeta, setImageMeta] = useState<{ width?: number; height?: number }>({});
+
   // Scan & Progress State
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanStatusText, setScanStatusText] = useState('인바디 결과지를 프레임 안에 맞춰주세요.');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [scannedResult, setScannedResult] = useState<InBodyRecord | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [showSamplePicker, setShowSamplePicker] = useState(false);
@@ -71,7 +74,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
     let stream: MediaStream | null = null;
 
-    // 1st attempt: exact or ideal facing mode (rear for mobile, user for webcam)
+    // 1st attempt: ideal facing mode
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -82,7 +85,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         audio: false,
       });
     } catch {
-      // 2nd attempt: general video with basic constraints
+      // 2nd attempt: generic facing
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -91,7 +94,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           audio: false,
         });
       } catch {
-        // 3rd attempt: any video stream at all (e.g. PC webcam)
+        // 3rd attempt: any video stream (e.g. PC webcam)
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: true,
@@ -128,27 +131,27 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
     setCameraActive(true);
 
-    // Inspect tracks for capabilities
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) {
       const trackSettings = videoTrack.getSettings?.() || {};
       const trackCaps = (videoTrack.getCapabilities?.() as any) || {};
 
       setTorchSupported(!!trackCaps.torch);
-
       const isEnv = trackSettings.facingMode === 'environment' || facing === 'environment';
       setCameraLabel(isEnv ? '후면 카메라 활성' : '전면/웹캠 활성');
     }
   }, [stopCurrentStream]);
 
-  // Lifecycle: start on mount or facing change
+  // Lifecycle: start on mount or facing change (only when not in preview/result)
   useEffect(() => {
-    startCamera(cameraFacing);
+    if (!previewImage && !scannedResult) {
+      startCamera(cameraFacing);
+    }
 
     return () => {
       stopCurrentStream();
     };
-  }, [cameraFacing, startCamera, stopCurrentStream]);
+  }, [cameraFacing, previewImage, scannedResult, startCamera, stopCurrentStream]);
 
   // Handle Flashlight / Torch toggle
   const toggleFlash = async () => {
@@ -175,8 +178,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setCameraFacing(next);
   };
 
-  // Helper: Compress and normalize smartphone photo into standard JPEG base64
-  const compressImageFile = (file: File): Promise<string> => {
+  // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions
+  const compressImageFile = (file: File): Promise<{ base64: string; width: number; height: number }> => {
     return new Promise((resolve) => {
       const objectUrl = URL.createObjectURL(file);
       const img = new Image();
@@ -186,6 +189,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
         const maxDimension = 1800;
         let width = img.width;
         let height = img.height;
+        const origWidth = width;
+        const origHeight = height;
 
         if (width > maxDimension || height > maxDimension) {
           if (width > height) {
@@ -204,13 +209,17 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
-          resolve(compressed);
+          const compressed = canvas.toDataURL('image/jpeg', 0.88);
+          resolve({ base64: compressed, width: origWidth, height: origHeight });
         } else {
-          // Fallback to FileReader if canvas 2d context fails
           const reader = new FileReader();
-          reader.onload = (e) => resolve((e.target?.result as string) || '');
-          reader.onerror = () => resolve('');
+          reader.onload = (e) =>
+            resolve({
+              base64: (e.target?.result as string) || '',
+              width: origWidth,
+              height: origHeight,
+            });
+          reader.onerror = () => resolve({ base64: '', width: 0, height: 0 });
           reader.readAsDataURL(file);
         }
       };
@@ -218,8 +227,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
         const reader = new FileReader();
-        reader.onload = (e) => resolve((e.target?.result as string) || '');
-        reader.onerror = () => resolve('');
+        reader.onload = (e) =>
+          resolve({ base64: (e.target?.result as string) || '', width: 0, height: 0 });
+        reader.onerror = () => resolve({ base64: '', width: 0, height: 0 });
         reader.readAsDataURL(file);
       };
 
@@ -227,37 +237,34 @@ export const ScanView: React.FC<ScanViewProps> = ({
     });
   };
 
-  // Handle Smartphone Camera / Gallery file upload
+  // Handle Smartphone Camera / Gallery file upload -> Enters Preview Mode for verification!
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setScanError(null);
-    setIsScanning(true);
-    setScanProgress(10);
-    setScanStatusText('📸 이미지 최적화 및 텍스트 영역 감지 중...');
+    stopCurrentStream();
 
     try {
-      const compressedBase64 = await compressImageFile(file);
-      if (!compressedBase64) {
-        setIsScanning(false);
+      const result = await compressImageFile(file);
+      if (!result.base64) {
         setScanError('이미지 파일을 읽을 수 없습니다. 다시 선택해주세요.');
         return;
       }
 
-      setSelectedImage(compressedBase64);
+      setPreviewImage(result.base64);
+      setImageMeta({ width: result.width, height: result.height });
       setShowSamplePicker(false);
-      triggerScanAnalysis(compressedBase64);
+      // Notice: We do NOT immediately analyze. The user can preview and verify resolution/range first!
     } catch (err) {
       console.warn('Image processing error:', err);
-      setIsScanning(false);
       setScanError('이미지 처리 중 문제가 발생했습니다. 다른 사진으로 시도해주세요.');
     } finally {
       e.target.value = '';
     }
   };
 
-  // Capture live video frame or launch native camera on phone
+  // Capture live video frame -> Enters Preview Mode for verification!
   const captureCameraFrame = () => {
     if (videoRef.current && cameraActive && videoRef.current.videoWidth > 100) {
       try {
@@ -269,8 +276,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const base64 = canvas.toDataURL('image/jpeg', 0.88);
-          setSelectedImage(base64);
-          triggerScanAnalysis(base64);
+          stopCurrentStream();
+          setPreviewImage(base64);
+          setImageMeta({ width: video.videoWidth, height: video.videoHeight });
           return;
         }
       } catch (e) {
@@ -286,8 +294,15 @@ export const ScanView: React.FC<ScanViewProps> = ({
     }
   };
 
-  // AI & OCR Scan Analysis with Real-time Multi-phase Progress Feedback
+  // AI & OCR Scan Analysis (Starts when user presses the Start OCR button in preview)
   const triggerScanAnalysis = async (customImageBase64?: string, presetData?: any) => {
+    const imageToAnalyze = customImageBase64 || previewImage;
+
+    if (!imageToAnalyze && !presetData) {
+      setScanError('분석할 인바디 결과지 이미지가 없습니다. 사진을 먼저 촬영해주세요.');
+      return;
+    }
+
     setIsScanning(true);
     setScannedResult(null);
     setScanError(null);
@@ -295,9 +310,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setScanProgress(15);
     setScanStatusText('🔍 AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...');
 
-    const imageToAnalyze = customImageBase64 || selectedImage;
-
-    // Simulated animated progress phases to ensure clear feedback during the 6-12s analysis
+    // Simulated animated progress phases to ensure clear feedback during the 8-12s analysis
     let progressTimer: NodeJS.Timeout | null = null;
     let step = 0;
     const steps = [
@@ -323,7 +336,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           setScanProgress(100);
           setIsScanning(false);
           setScannedResult(record);
-        }, 500);
+        }, 600);
         return;
       }
 
@@ -510,8 +523,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
     });
   };
 
-  const handleResetScan = () => {
-    setSelectedImage(null);
+  // Retake photo or reset preview
+  const handleRetakePhoto = () => {
+    setPreviewImage(null);
+    setImageMeta({});
     setScannedResult(null);
     setScanError(null);
     setIsScanning(false);
@@ -565,7 +580,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   ];
 
   return (
-    <div className="relative w-full h-[calc(100vh-4.5rem)] md:h-[750px] md:max-w-2xl md:mx-auto bg-[#0A0B0E] overflow-hidden flex flex-col justify-between md:rounded-3xl md:border md:border-[#2A2D35] md:shadow-2xl">
+    <div className="relative w-full h-[calc(100vh-4.5rem)] md:h-[760px] md:max-w-2xl md:mx-auto bg-[#0A0B0E] overflow-hidden flex flex-col justify-between md:rounded-3xl md:border md:border-[#2A2D35] md:shadow-2xl">
       {/* Hidden File Inputs for Smartphone Native Camera & Gallery */}
       <input
         type="file"
@@ -589,47 +604,61 @@ export const ScanView: React.FC<ScanViewProps> = ({
       )}
 
       {/* Header Bar */}
-      <header className="relative z-20 flex justify-between items-center px-4 py-3 bg-[#0A0B0E]/80 backdrop-blur-md border-b border-[#2A2D35]/50">
+      <header className="relative z-20 flex justify-between items-center px-4 py-3 bg-[#0A0B0E]/85 backdrop-blur-md border-b border-[#2A2D35]/60 shrink-0">
         <button
-          onClick={onBack}
+          onClick={previewImage && !scannedResult ? handleRetakePhoto : onBack}
           className="w-10 h-10 flex items-center justify-center rounded-full bg-[#12141C] border border-[#2A2D35] text-[#E2E4E9] hover:bg-[#1A1D26] active:scale-95 transition-all shadow-md"
-          title="뒤로 가기"
+          title={previewImage && !scannedResult ? '다시 촬영' : '뒤로 가기'}
         >
-          <span className="material-symbols-outlined text-[20px]">arrow_back</span>
+          <span className="material-symbols-outlined text-[20px]">
+            {previewImage && !scannedResult ? 'arrow_back' : 'arrow_back'}
+          </span>
         </button>
 
         <div className="flex flex-col items-center">
           <div className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-[#E2E4E9]">
             <span className="w-2 h-2 rounded-full bg-[#3B82F6] animate-ping" />
-            <span>AI 인바디 스마트 스캐너</span>
+            <span>
+              {scannedResult
+                ? '인바디 분석 완료'
+                : previewImage
+                ? '촬영된 결과지 사진 확인'
+                : 'AI 인바디 스마트 스캐너'}
+            </span>
           </div>
-          <span className="text-[10px] text-[#9CA3AF] font-mono">{cameraLabel}</span>
+          <span className="text-[10px] text-[#9CA3AF] font-mono">
+            {previewImage ? '사진 검토 후 분석 버튼을 누르세요' : cameraLabel}
+          </span>
         </div>
 
         <div className="flex items-center gap-1.5">
-          {/* Flash Toggle */}
-          <button
-            onClick={toggleFlash}
-            className={`w-9 h-9 flex items-center justify-center rounded-full border transition-all shadow-md active:scale-95 ${
-              flashOn
-                ? 'bg-[#F59E0B] text-black border-[#F59E0B] shadow-amber-500/30'
-                : 'bg-[#12141C] text-[#E2E4E9] border-[#2A2D35] hover:bg-[#1A1D26]'
-            }`}
-            title="플래시 조명 토글"
-          >
-            <span className="material-symbols-outlined text-[18px]">
-              {flashOn ? 'flash_on' : 'flash_off'}
-            </span>
-          </button>
+          {!previewImage && !scannedResult && (
+            <>
+              {/* Flash Toggle */}
+              <button
+                onClick={toggleFlash}
+                className={`w-9 h-9 flex items-center justify-center rounded-full border transition-all shadow-md active:scale-95 ${
+                  flashOn
+                    ? 'bg-[#F59E0B] text-black border-[#F59E0B] shadow-amber-500/30'
+                    : 'bg-[#12141C] text-[#E2E4E9] border-[#2A2D35] hover:bg-[#1A1D26]'
+                }`}
+                title="플래시 조명 토글"
+              >
+                <span className="material-symbols-outlined text-[18px]">
+                  {flashOn ? 'flash_on' : 'flash_off'}
+                </span>
+              </button>
 
-          {/* Camera Switch */}
-          <button
-            onClick={toggleCameraFacing}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-[#12141C] border border-[#2A2D35] text-[#E2E4E9] hover:bg-[#1A1D26] active:scale-95 transition-all shadow-md"
-            title="전면/후면/웹캠 전환"
-          >
-            <span className="material-symbols-outlined text-[18px]">cameraswitch</span>
-          </button>
+              {/* Camera Switch */}
+              <button
+                onClick={toggleCameraFacing}
+                className="w-9 h-9 flex items-center justify-center rounded-full bg-[#12141C] border border-[#2A2D35] text-[#E2E4E9] hover:bg-[#1A1D26] active:scale-95 transition-all shadow-md"
+                title="전면/후면/웹캠 전환"
+              >
+                <span className="material-symbols-outlined text-[18px]">cameraswitch</span>
+              </button>
+            </>
+          )}
 
           {/* Help Guide */}
           <button
@@ -642,81 +671,287 @@ export const ScanView: React.FC<ScanViewProps> = ({
         </div>
       </header>
 
-      {/* Main Viewfinder / Camera Surface */}
+      {/* Main Surface Area */}
       <main className="relative flex-1 w-full bg-[#050608] flex items-center justify-center overflow-hidden">
-        {/* Live Camera Video Feed */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
-            cameraActive && !selectedImage ? 'opacity-100' : 'opacity-0 pointer-events-none'
-          }`}
-        />
+        {/* ========================================================================= */}
+        {/* VIEW 1: Live Viewfinder / Camera Screen (Before taking photo)            */}
+        {/* ========================================================================= */}
+        {!previewImage && !scannedResult && (
+          <>
+            {/* Live Camera Video Feed */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+                cameraActive ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              }`}
+            />
 
-        {/* Uploaded or Captured Image Preview */}
-        {selectedImage && (
-          <img
-            src={selectedImage}
-            alt="스캔된 인바디 이미지"
-            className="absolute inset-0 w-full h-full object-contain bg-[#0A0B0E] transition-all duration-300 z-10"
-          />
-        )}
+            {/* Fallback background when camera is off/permission pending */}
+            {!cameraActive && (
+              <div
+                className="absolute inset-0 w-full h-full bg-cover bg-center opacity-30 mix-blend-luminosity"
+                style={{
+                  backgroundImage: `url('${SAMPLE_SHEET_BG}')`,
+                }}
+              />
+            )}
 
-        {/* Fallback image when camera is off/permission pending */}
-        {!cameraActive && !selectedImage && (
-          <div
-            className="absolute inset-0 w-full h-full bg-cover bg-center opacity-30 mix-blend-luminosity"
-            style={{
-              backgroundImage: `url('${SAMPLE_SHEET_BG}')`,
-            }}
-          />
-        )}
-
-        {/* Camera Permission / Error Notification banner */}
-        {cameraError && !selectedImage && (
-          <div className="absolute top-12 z-20 px-4 w-full max-w-sm">
-            <div className="bg-[#12141C]/95 border border-[#F59E0B]/50 p-4 rounded-2xl backdrop-blur-md shadow-2xl text-center space-y-3">
-              <div className="flex items-center justify-center gap-1.5 text-[#F59E0B] font-bold text-xs">
-                <span className="material-symbols-outlined text-[18px]">videocam_off</span>
-                <span>카메라 안내</span>
-              </div>
-              <p className="text-[11px] text-[#9CA3AF] leading-relaxed">
-                {cameraError}
-              </p>
-              <div className="flex flex-col gap-2 pt-1">
-                <button
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="w-full py-2.5 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
-                >
-                  <span className="material-symbols-outlined text-[18px]">photo_camera</span>
-                  스마트폰 카메라로 바로 촬영
-                </button>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] font-bold text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">photo_library</span>
-                    갤러리 사진 선택
-                  </button>
-                  <button
-                    onClick={() => startCamera(cameraFacing)}
-                    className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">refresh</span>
-                    웹캠 다시 시도
-                  </button>
+            {/* Camera Permission / Error Notification banner */}
+            {cameraError && (
+              <div className="absolute top-12 z-20 px-4 w-full max-w-sm">
+                <div className="bg-[#12141C]/95 border border-[#F59E0B]/50 p-4 rounded-2xl backdrop-blur-md shadow-2xl text-center space-y-3">
+                  <div className="flex items-center justify-center gap-1.5 text-[#F59E0B] font-bold text-xs">
+                    <span className="material-symbols-outlined text-[18px]">videocam_off</span>
+                    <span>카메라 안내</span>
+                  </div>
+                  <p className="text-[11px] text-[#9CA3AF] leading-relaxed">
+                    {cameraError}
+                  </p>
+                  <div className="flex flex-col gap-2 pt-1">
+                    <button
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="w-full py-2.5 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">photo_camera</span>
+                      스마트폰 카메라로 바로 촬영
+                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] font-bold text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">photo_library</span>
+                        갤러리 사진 선택
+                      </button>
+                      <button
+                        onClick={() => startCamera(cameraFacing)}
+                        className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">refresh</span>
+                        웹캠 다시 시도
+                      </button>
+                    </div>
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {/* Viewfinder Overlay Guide */}
+            <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between items-center p-4 sm:p-6">
+              {/* Instruction Banner */}
+              <div className="bg-[#12141C]/95 backdrop-blur-md px-5 py-2 rounded-2xl shadow-xl border border-[#2A2D35] max-w-sm text-center">
+                <p className="text-xs font-semibold text-[#60A5FA]">
+                  {scanStatusText}
+                </p>
+              </div>
+
+              {/* Alignment Reticle */}
+              <div className="w-full max-w-xs sm:max-w-sm aspect-[1/1.35] border-2 border-[#3B82F6]/50 rounded-2xl relative overflow-hidden bg-[#3B82F6]/5 backdrop-blur-[1px] shadow-2xl">
+                {/* Corner Guides */}
+                <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-[#3B82F6] rounded-tl-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+                <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-[#3B82F6] rounded-tr-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-[#3B82F6] rounded-bl-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+                <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-[#3B82F6] rounded-br-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+
+                {/* Scanning Line Animation */}
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#60A5FA] to-transparent opacity-90 animate-scan shadow-[0_0_12px_rgba(59,130,246,1)]" />
+
+                {/* Center Document Scanner Icon */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 opacity-50">
+                  <span className="material-symbols-outlined text-4xl text-[#60A5FA]">
+                    document_scanner
+                  </span>
+                  <span className="text-[10px] text-[#9CA3AF] font-medium">인바디 결과지 영역</span>
+                </div>
+              </div>
+
+              {/* Spacer */}
+              <div className="h-24 w-full" />
+            </div>
+
+            {/* Camera Controls Bar */}
+            <div className="absolute bottom-6 left-0 w-full z-20 flex justify-between items-center px-6 sm:px-14">
+              {/* Gallery / Presets Button */}
+              <button
+                onClick={() => setShowSamplePicker(true)}
+                className="flex flex-col items-center gap-1 text-[#E2E4E9] bg-[#12141C]/90 border border-[#2A2D35] backdrop-blur-md p-3 rounded-2xl hover:bg-[#1A1D26] active:scale-95 transition-all shadow-lg pointer-events-auto"
+                title="갤러리 사진 / 샘플 선택"
+              >
+                <span className="material-symbols-outlined text-[26px] text-[#60A5FA]">
+                  photo_library
+                </span>
+                <span className="text-xs font-medium">갤러리</span>
+              </button>
+
+              {/* Center Shutter Button (Takes photo and moves to Preview Verification) */}
+              <button
+                onClick={captureCameraFrame}
+                className="w-20 h-20 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] rounded-full border-4 border-[#2A2D35] shadow-2xl shadow-blue-500/30 flex items-center justify-center active:scale-90 hover:from-[#2563EB] hover:to-[#7C3AED] transition-all group pointer-events-auto"
+                title="인바디 결과지 촬영하기"
+                aria-label="인바디 결과지 촬영하기"
+              >
+                <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-full flex items-center justify-center group-hover:bg-white/25 transition-colors">
+                  <span className="material-symbols-outlined text-white text-3xl">
+                    photo_camera
+                  </span>
+                </div>
+              </button>
+
+              {/* Direct Phone Native Camera Button */}
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                className="flex flex-col items-center gap-1 p-3 rounded-2xl bg-[#12141C]/90 text-[#E2E4E9] border border-[#2A2D35] hover:bg-[#1A1D26] backdrop-blur-md active:scale-95 transition-all shadow-lg pointer-events-auto"
+                title="스마트폰 고화질 카메라 촬영"
+              >
+                <span className="material-symbols-outlined text-[26px] text-[#34D399]">
+                  camera
+                </span>
+                <span className="text-xs font-medium">카메라</span>
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 2: Photo Preview & Verification Screen (Before OCR Trigger)         */}
+        {/* ========================================================================= */}
+        {previewImage && !scannedResult && !isScanning && (
+          <div className="absolute inset-0 z-20 flex flex-col justify-between bg-[#0A0B0E] p-4 overflow-y-auto">
+            {/* Top Guide Banner */}
+            <div className="bg-[#12141C] border border-[#3B82F6]/40 p-3 rounded-2xl flex items-center justify-between shadow-lg">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#3B82F6]/15 border border-[#3B82F6]/30 flex items-center justify-center text-[#60A5FA]">
+                  <span className="material-symbols-outlined text-[18px]">crop_free</span>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-[#E2E4E9]">촬영된 이미지 검토</h4>
+                  <p className="text-[10px] text-[#9CA3AF]">
+                    숫자와 표가 선명하게 보이는지 확인 후 분석을 시작하세요
+                  </p>
+                </div>
+              </div>
+              {imageMeta.width && (
+                <span className="text-[10px] font-mono text-[#60A5FA] bg-[#1E222D] px-2 py-0.5 rounded-md border border-[#2A2D35]">
+                  {imageMeta.width}×{imageMeta.height}
+                </span>
+              )}
+            </div>
+
+            {/* Photo Preview Container */}
+            <div className="relative my-3 flex-1 min-h-[220px] max-h-[360px] bg-[#050608] rounded-2xl border border-[#2A2D35] overflow-hidden flex items-center justify-center shadow-inner group">
+              <img
+                src={previewImage}
+                alt="촬영된 인바디 결과지 미리보기"
+                className="w-full h-full object-contain"
+              />
+
+              {/* Target Scan Corner Overlay */}
+              <div className="absolute inset-2 border border-[#3B82F6]/30 rounded-xl pointer-events-none" />
+              <div className="absolute top-4 left-4 w-5 h-5 border-t-2 border-l-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute top-4 right-4 w-5 h-5 border-t-2 border-r-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute bottom-4 left-4 w-5 h-5 border-b-2 border-l-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute bottom-4 right-4 w-5 h-5 border-b-2 border-r-2 border-[#60A5FA] pointer-events-none" />
+
+              <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-sm text-[10px] text-[#9CA3AF] px-2 py-1 rounded-md">
+                미리보기 확인
+              </div>
+            </div>
+
+            {/* Verification Checklist */}
+            <div className="bg-[#12141C] border border-[#2A2D35] p-3 rounded-2xl space-y-1.5 text-[11px] mb-3">
+              <div className="flex items-center gap-2 text-[#34D399] font-semibold">
+                <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                <span>체중, 골격근량, 체지방률 숫자가 선명하게 보이나요?</span>
+              </div>
+              <div className="flex items-center gap-2 text-[#34D399] font-semibold">
+                <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                <span>결과지 표 영역이 잘리지 않고 온전히 포함되었나요?</span>
+              </div>
+            </div>
+
+            {/* Action Buttons: Start OCR vs Retake */}
+            <div className="space-y-2 shrink-0">
+              {/* PRIMARY ACTION: Start AI OCR Analysis */}
+              <button
+                onClick={() => triggerScanAnalysis(previewImage)}
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] hover:from-[#2563EB] hover:to-[#7C3AED] active:scale-95 text-white font-bold text-sm rounded-2xl shadow-xl shadow-blue-500/25 transition-all flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[20px]">psychology</span>
+                이 사진으로 AI 정밀 수치 분석 시작 (OCR)
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRetakePhoto}
+                  className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#E2E4E9] font-semibold text-xs rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[16px]">refresh</span>
+                  다시 촬영하기
+                </button>
+
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#60A5FA] font-semibold text-xs rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <span className="material-symbols-outlined text-[16px]">photo_library</span>
+                  다른 사진 선택
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Invalid InBody Image / Scan Error Alert Modal */}
+        {/* ========================================================================= */}
+        {/* VIEW 3: AI Scanning Progress Overlay (Active during 8-12s analysis)      */}
+        {/* ========================================================================= */}
+        {isScanning && (
+          <div className="absolute inset-0 z-40 bg-[#0A0B0E]/95 backdrop-blur-md flex flex-col items-center justify-center text-white gap-4 p-6 text-center animate-in fade-in duration-200">
+            {/* Background image preview with blur */}
+            {previewImage && (
+              <div
+                className="absolute inset-0 bg-cover bg-center opacity-15 blur-sm"
+                style={{ backgroundImage: `url('${previewImage}')` }}
+              />
+            )}
+
+            <div className="relative z-10">
+              <div className="w-16 h-16 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin shadow-xl shadow-blue-500/20" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-xs font-black text-[#60A5FA]">{scanProgress}%</span>
+              </div>
+            </div>
+
+            <div className="relative z-10 space-y-2 max-w-[280px]">
+              <h3 className="text-sm font-bold text-[#E2E4E9]">
+                AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...
+              </h3>
+              <p className="text-xs text-[#9CA3AF] animate-pulse">
+                {scanStatusText}
+              </p>
+            </div>
+
+            {/* Visual Progress Bar */}
+            <div className="relative z-10 w-full max-w-[220px] h-2 bg-[#161822] rounded-full overflow-hidden border border-[#2A2D35]">
+              <div
+                className="h-full bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] transition-all duration-500 rounded-full"
+                style={{ width: `${Math.max(12, scanProgress)}%` }}
+              />
+            </div>
+
+            <p className="relative z-10 text-[10px] text-[#6B7280]">
+              Gemini Vision OCR 엔진이 결과지 표를 판독 중입니다 (약 8~10초 소요)
+            </p>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 4: Invalid Scan / Error Modal                                       */}
+        {/* ========================================================================= */}
         {scanError && (
-          <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-[#12141C] border border-[#EF4444]/40 rounded-3xl p-5 w-full max-w-md shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-[#EF4444]/15 border border-[#EF4444]/30 flex items-center justify-center text-[#EF4444] shrink-0">
@@ -745,6 +980,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <button
                   onClick={() => {
                     setScanError(null);
+                    setPreviewImage(null);
                     cameraInputRef.current?.click();
                   }}
                   className="w-full py-3 px-4 bg-[#3B82F6] hover:bg-[#2563EB] active:scale-95 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
@@ -756,6 +992,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   <button
                     onClick={() => {
                       setScanError(null);
+                      setPreviewImage(null);
                       fileInputRef.current?.click();
                     }}
                     className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#60A5FA] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
@@ -779,73 +1016,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
           </div>
         )}
 
-        {/* Viewfinder Overlay Guide */}
-        {!scannedResult && (
-          <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between items-center p-4 sm:p-6">
-            {/* Instruction Banner */}
-            <div className="bg-[#12141C]/95 backdrop-blur-md px-5 py-2.5 rounded-2xl shadow-xl border border-[#2A2D35] max-w-sm text-center">
-              <p className="text-xs font-semibold text-[#60A5FA]">
-                {scanStatusText}
-              </p>
-            </div>
-
-            {/* Alignment Reticle */}
-            <div className="w-full max-w-xs sm:max-w-sm aspect-[1/1.35] border-2 border-[#3B82F6]/50 rounded-2xl relative overflow-hidden bg-[#3B82F6]/5 backdrop-blur-[1px] shadow-2xl">
-              {/* Corner Guides */}
-              <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-[#3B82F6] rounded-tl-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
-              <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-[#3B82F6] rounded-tr-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
-              <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-[#3B82F6] rounded-bl-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
-              <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-[#3B82F6] rounded-br-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
-
-              {/* Scanning Line Animation */}
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#60A5FA] to-transparent opacity-90 animate-scan shadow-[0_0_12px_rgba(59,130,246,1)]" />
-
-              {/* Center Document Scanner Icon */}
-              {!isScanning && (
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 opacity-50">
-                  <span className="material-symbols-outlined text-4xl text-[#60A5FA]">
-                    document_scanner
-                  </span>
-                  <span className="text-[10px] text-[#9CA3AF] font-medium">인바디 결과지 영역</span>
-                </div>
-              )}
-
-              {/* AI Scanning Active Progress Overlay (Visible during 6-12s analysis) */}
-              {isScanning && (
-                <div className="absolute inset-0 bg-[#0A0B0E]/90 backdrop-blur-md flex flex-col items-center justify-center text-white gap-3.5 p-5 text-center">
-                  <div className="relative">
-                    <div className="w-14 h-14 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin shadow-lg" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-[11px] font-black text-[#60A5FA]">{scanProgress}%</span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 max-w-[240px]">
-                    <p className="text-xs font-bold text-[#E2E4E9]">
-                      AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...
-                    </p>
-                    <p className="text-[11px] text-[#9CA3AF] animate-pulse">
-                      {scanStatusText}
-                    </p>
-                  </div>
-
-                  {/* Visual Progress Bar */}
-                  <div className="w-full max-w-[200px] h-1.5 bg-[#161822] rounded-full overflow-hidden border border-[#2A2D35]">
-                    <div
-                      className="h-full bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] transition-all duration-500 rounded-full"
-                      style={{ width: `${Math.max(10, scanProgress)}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Spacer */}
-            <div className="h-24 w-full" />
-          </div>
-        )}
-
-        {/* Scan Result Confirmation & Direct Adjustment Sheet */}
+        {/* ========================================================================= */}
+        {/* VIEW 5: Scanned Result Confirmation & Metric Review Screen               */}
+        {/* ========================================================================= */}
         {scannedResult && (
           <div className="absolute inset-0 z-30 bg-[#0A0B0E]/90 backdrop-blur-md flex flex-col justify-end p-3 sm:p-4 overflow-y-auto">
             <div className="bg-[#12141C] border border-[#2A2D35] rounded-3xl p-4 sm:p-5 w-full max-w-lg mx-auto shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-bottom duration-300 my-auto">
@@ -877,7 +1050,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </button>
               </div>
 
-              {/* Key Metrics Grid (Interactive inputs for fast verification) */}
+              {/* Key Metrics Grid */}
               <div className="grid grid-cols-3 gap-2 text-center">
                 {/* Weight */}
                 <div className="p-2.5 bg-[#0D0F16] rounded-2xl border border-[#2A2D35]">
@@ -975,7 +1148,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
                 <div className="flex gap-2">
                   <button
-                    onClick={handleResetScan}
+                    onClick={handleRetakePhoto}
                     className="flex-1 py-2 px-3 bg-[#161822] hover:bg-[#1A1D26] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1"
                   >
                     <span className="material-symbols-outlined text-[15px]">refresh</span>
@@ -991,50 +1164,6 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Camera Controls Bar (When not showing final result card) */}
-        {!scannedResult && (
-          <div className="absolute bottom-6 left-0 w-full z-20 flex justify-between items-center px-6 sm:px-14">
-            {/* Gallery / Presets Button */}
-            <button
-              onClick={() => setShowSamplePicker(true)}
-              className="flex flex-col items-center gap-1 text-[#E2E4E9] bg-[#12141C]/90 border border-[#2A2D35] backdrop-blur-md p-3 rounded-2xl hover:bg-[#1A1D26] active:scale-95 transition-all shadow-lg pointer-events-auto"
-              title="갤러리 사진 / 샘플 선택"
-            >
-              <span className="material-symbols-outlined text-[26px] text-[#60A5FA]">
-                photo_library
-              </span>
-              <span className="text-xs font-medium">갤러리</span>
-            </button>
-
-            {/* Center Shutter Scan Button */}
-            <button
-              disabled={isScanning}
-              onClick={captureCameraFrame}
-              className="w-20 h-20 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] rounded-full border-4 border-[#2A2D35] shadow-2xl shadow-blue-500/30 flex items-center justify-center active:scale-90 hover:from-[#2563EB] hover:to-[#7C3AED] transition-all group pointer-events-auto disabled:opacity-50"
-              title="결과지 촬영 및 스캔"
-              aria-label="결과지 촬영 및 스캔"
-            >
-              <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-full flex items-center justify-center group-hover:bg-white/25 transition-colors">
-                <span className="material-symbols-outlined text-white text-3xl">
-                  photo_camera
-                </span>
-              </div>
-            </button>
-
-            {/* Direct Phone Camera Button */}
-            <button
-              onClick={() => cameraInputRef.current?.click()}
-              className="flex flex-col items-center gap-1 p-3 rounded-2xl bg-[#12141C]/90 text-[#E2E4E9] border border-[#2A2D35] hover:bg-[#1A1D26] backdrop-blur-md active:scale-95 transition-all shadow-lg pointer-events-auto"
-              title="스마트폰 카메라로 촬영"
-            >
-              <span className="material-symbols-outlined text-[26px] text-[#34D399]">
-                camera
-              </span>
-              <span className="text-xs font-medium">카메라</span>
-            </button>
           </div>
         )}
       </main>
@@ -1135,12 +1264,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
               스캔 팁 및 가이드
             </h3>
             <ul className="text-xs text-[#9CA3AF] space-y-2.5 list-disc pl-4 leading-relaxed">
-              <li>스마트폰 후면 카메라 및 PC 웹캠을 모두 지원합니다.</li>
-              <li>상단의 카메라 전환 버튼으로 전면/후면/웹캠을 바꿀 수 있습니다.</li>
-              <li>카메라 권한 팝업이 뜨면 <b>[허용]</b>을 눌러주세요.</li>
+              <li>촬영 후 <b>사진 미리보기 화면</b>에서 글자/숫자가 잘 나왔는지 직접 확인할 수 있습니다.</li>
+              <li>사진이 마음에 들면 <b>[AI 정밀 수치 분석 시작]</b>을 누르세요.</li>
+              <li>흐리거나 잘렸다면 <b>[다시 촬영하기]</b>를 눌러 다시 찍을 수 있습니다.</li>
               <li>어두운 곳에서는 상단의 <b>플래시</b> 버튼을 켜주세요.</li>
-              <li><b>갤러리</b> 또는 <b>카메라</b> 버튼을 누르면 이미 찍어둔 사진을 바로 분석합니다.</li>
-              <li>스캔 후 언제든 수치를 직접 수정하고 저장할 수 있습니다.</li>
+              <li>분석 완료 후 언제든 수치를 직접 탭하여 수정하고 저장할 수 있습니다.</li>
             </ul>
             <button
               onClick={() => setShowHelp(false)}
