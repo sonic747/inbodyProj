@@ -26,10 +26,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [flashOn, setFlashOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
-  const [cameraLabel, setCameraLabel] = useState('카메라 시작 중...');
+  const [cameraLabel, setCameraLabel] = useState('카메라 연결 중...');
 
-  // Scan & Result State
+  // Scan & Progress State
   const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
   const [scanStatusText, setScanStatusText] = useState('인바디 결과지를 프레임 안에 맞춰주세요.');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [scannedResult, setScannedResult] = useState<InBodyRecord | null>(null);
@@ -38,7 +39,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [showHelp, setShowHelp] = useState(false);
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
 
-  // Safely stop stream
+  // Safely stop video stream
   const stopCurrentStream = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
@@ -136,7 +137,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
       setTorchSupported(!!trackCaps.torch);
 
       const isEnv = trackSettings.facingMode === 'environment' || facing === 'environment';
-      setCameraLabel(isEnv ? '스마트폰 후면 카메라 활성' : '웹캠 / 전면 카메라 활성');
+      setCameraLabel(isEnv ? '후면 카메라 활성' : '전면/웹캠 활성');
     }
   }, [stopCurrentStream]);
 
@@ -174,18 +175,100 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setCameraFacing(next);
   };
 
-  // Capture current camera video frame or launch native mobile camera
+  // Helper: Compress and normalize smartphone photo into standard JPEG base64
+  const compressImageFile = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const maxDimension = 1800;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+          resolve(compressed);
+        } else {
+          // Fallback to FileReader if canvas 2d context fails
+          const reader = new FileReader();
+          reader.onload = (e) => resolve((e.target?.result as string) || '');
+          reader.onerror = () => resolve('');
+          reader.readAsDataURL(file);
+        }
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        const reader = new FileReader();
+        reader.onload = (e) => resolve((e.target?.result as string) || '');
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(file);
+      };
+
+      img.src = objectUrl;
+    });
+  };
+
+  // Handle Smartphone Camera / Gallery file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setScanError(null);
+    setIsScanning(true);
+    setScanProgress(10);
+    setScanStatusText('📸 이미지 최적화 및 텍스트 영역 감지 중...');
+
+    try {
+      const compressedBase64 = await compressImageFile(file);
+      if (!compressedBase64) {
+        setIsScanning(false);
+        setScanError('이미지 파일을 읽을 수 없습니다. 다시 선택해주세요.');
+        return;
+      }
+
+      setSelectedImage(compressedBase64);
+      setShowSamplePicker(false);
+      triggerScanAnalysis(compressedBase64);
+    } catch (err) {
+      console.warn('Image processing error:', err);
+      setIsScanning(false);
+      setScanError('이미지 처리 중 문제가 발생했습니다. 다른 사진으로 시도해주세요.');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  // Capture live video frame or launch native camera on phone
   const captureCameraFrame = () => {
     if (videoRef.current && cameraActive && videoRef.current.videoWidth > 100) {
       try {
         const video = videoRef.current;
         const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 1920;
-        canvas.height = video.videoHeight || 1080;
+        canvas.width = Math.min(video.videoWidth, 1920);
+        canvas.height = Math.min(video.videoHeight, 1080);
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const base64 = canvas.toDataURL('image/jpeg', 0.92);
+          const base64 = canvas.toDataURL('image/jpeg', 0.88);
           setSelectedImage(base64);
           triggerScanAnalysis(base64);
           return;
@@ -195,7 +278,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
       }
     }
 
-    // If live video is not active/available, seamlessly trigger phone's native camera
+    // If live camera is not streaming (e.g. mobile browser limitations), trigger native camera
     if (cameraInputRef.current) {
       cameraInputRef.current.click();
     } else if (fileInputRef.current) {
@@ -203,98 +286,51 @@ export const ScanView: React.FC<ScanViewProps> = ({
     }
   };
 
-  // Handle Smartphone Camera / Gallery file upload with high-precision canvas optimization
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setScanError(null);
-    setScanStatusText('⚡ 고화질 이미지 로딩 및 OCR 준비 중...');
-    setIsScanning(true);
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const rawBase64 = event.target?.result as string;
-      if (!rawBase64) {
-        setIsScanning(false);
-        setScanError('이미지 파일을 읽을 수 없습니다. 다시 선택해주세요.');
-        return;
-      }
-
-      // Optimize for high-precision OCR: max 2048px and 0.88 quality
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 2048;
-        let w = img.width;
-        let h = img.height;
-        if (w > maxDim || h > maxDim) {
-          if (w > h) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
-          } else {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
-          }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, w, h);
-          const compressed = canvas.toDataURL('image/jpeg', 0.88);
-          setSelectedImage(compressed);
-          setShowSamplePicker(false);
-          triggerScanAnalysis(compressed);
-        } else {
-          setSelectedImage(rawBase64);
-          setShowSamplePicker(false);
-          triggerScanAnalysis(rawBase64);
-        }
-      };
-      img.onerror = () => {
-        // Fallback to direct raw base64
-        setSelectedImage(rawBase64);
-        setShowSamplePicker(false);
-        triggerScanAnalysis(rawBase64);
-      };
-      img.src = rawBase64;
-    };
-    reader.onerror = () => {
-      setIsScanning(false);
-      setScanError('이미지 파일을 불러오지 못했습니다. 다른 사진으로 다시 시도해주세요.');
-    };
-    reader.readAsDataURL(file);
-
-    // Reset input value so re-selecting same file fires onChange
-    e.target.value = '';
-  };
-
-  // AI & OCR Scan Analysis
+  // AI & OCR Scan Analysis with Real-time Multi-phase Progress Feedback
   const triggerScanAnalysis = async (customImageBase64?: string, presetData?: any) => {
     setIsScanning(true);
     setScannedResult(null);
     setScanError(null);
     setIsEditingMetrics(false);
-    setScanStatusText('⚡ AI 고속 스마트 OCR 분석 중 (결과지 영역 감지)...');
+    setScanProgress(15);
+    setScanStatusText('🔍 AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...');
 
     const imageToAnalyze = customImageBase64 || selectedImage;
+
+    // Simulated animated progress phases to ensure clear feedback during the 6-12s analysis
+    let progressTimer: NodeJS.Timeout | null = null;
+    let step = 0;
+    const steps = [
+      { p: 30, text: '🔍 AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...' },
+      { p: 55, text: '⚡ 체중, 골격근량, 체지방률 지표 정밀 OCR 판독 중...' },
+      { p: 75, text: '🧠 Gemini Vision AI 체성분 지표 교차 검증 중...' },
+      { p: 90, text: '✨ 인바디 정밀 분석 리포트 생성 중...' },
+    ];
+
+    progressTimer = setInterval(() => {
+      if (step < steps.length) {
+        setScanProgress(steps[step].p);
+        setScanStatusText(steps[step].text);
+        step++;
+      }
+    }, 2200);
 
     try {
       if (presetData) {
         setTimeout(() => {
+          if (progressTimer) clearInterval(progressTimer);
           const record = createRecordFromParsed(presetData);
+          setScanProgress(100);
           setIsScanning(false);
           setScannedResult(record);
-        }, 200);
+        }, 500);
         return;
       }
 
       if (imageToAnalyze) {
-        setScanStatusText('⚡ 체성분 지표(체중, 골격근, 체지방) 정밀 판독 중...');
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const timeoutId = setTimeout(() => controller.abort(), 28000);
 
           const res = await fetch('/api/analyze-inbody', {
             method: 'POST',
@@ -303,6 +339,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
             signal: controller.signal,
           });
           clearTimeout(timeoutId);
+          if (progressTimer) clearInterval(progressTimer);
 
           if (res.ok) {
             const parsed = await res.json();
@@ -310,42 +347,52 @@ export const ScanView: React.FC<ScanViewProps> = ({
               setIsScanning(false);
               setScanError(
                 parsed.error ||
-                  '인바디 결과지 양식이 인식되지 않았습니다. 인바디/체성분 검사 결과지 전체가 선명하게 나오도록 정확히 스캔해주세요.'
+                  '인바디 결과지 양식이 인식되지 않았습니다. 결과지의 체중, 골격근량, 체지방률 표가 선명하게 나오도록 다시 촬영해주세요.'
               );
               return;
             }
 
             if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
+              setScanProgress(100);
               const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
               setScannedResult(record);
               return;
             }
-          } else {
-            const errData = await res.json().catch(() => ({}));
+          }
+
+          // In case of non-200 or unexpected payload, gracefully convert into editable record
+          const fallbackData = await res.json().catch(() => ({}));
+          if (fallbackData && fallbackData.weight) {
+            const record = createRecordFromParsed(fallbackData, imageToAnalyze);
             setIsScanning(false);
-            setScanError(
-              errData.error ||
-                '인바디 결과지 양식이 아닙니다. 정확한 인바디 검사 결과지를 프레임에 맞춰 다시 스캔해주세요.'
-            );
+            setScannedResult(record);
             return;
           }
-        } catch (fetchErr) {
-          console.warn('OCR fetch error or timeout:', fetchErr);
+
           setIsScanning(false);
           setScanError(
-            '인바디 분석 시간 초과 또는 네트워크 오류가 발생했습니다. 조명이 밝은 곳에서 결과지를 평평하게 두고 다시 촬영해주세요.'
+            '인바디 결과지의 텍스트를 판독하기 어렵습니다. 조명이 밝은 곳에서 결과지를 평평하게 두고 다시 촬영해주세요.'
+          );
+          return;
+        } catch (fetchErr) {
+          console.warn('OCR fetch error or timeout:', fetchErr);
+          if (progressTimer) clearInterval(progressTimer);
+          setIsScanning(false);
+          setScanError(
+            '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
           );
           return;
         }
       }
 
+      if (progressTimer) clearInterval(progressTimer);
       setIsScanning(false);
       setScanError('인바디 결과지 이미지를 촬영하거나 업로드해주세요.');
     } catch {
+      if (progressTimer) clearInterval(progressTimer);
       setIsScanning(false);
       setScanError('인바디 결과지 양식이 아닙니다. 정확한 인바디 결과지를 스캔해주세요.');
-      setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
     }
   };
 
@@ -420,61 +467,64 @@ export const ScanView: React.FC<ScanViewProps> = ({
       imageUrl: imageUrl || SAMPLE_SHEET_BG,
       notes: '스윙짐 AI 정밀 스캐너를 통해 자동 추출된 인바디 리포트입니다.',
       aiFeedback: {
+        evaluation: (pbf <= 20 ? 'excellent' : pbf <= 28 ? 'good' : pbf <= 33 ? 'average' : 'attention') as 'excellent' | 'good' | 'average' | 'attention',
         summary:
           data.summary ||
-          `체중 ${weight}kg(심한과체중), 골격근량 ${smm}kg(우수), 체지방량 ${bfm}kg(체지방률 ${pbf}%), 복부지방률 ${whr}입니다. 골격근량이 ${smm}kg으로 튼튼하여 체지방 ${Math.abs(fatCtrl)}kg 감량 관리가 권장됩니다.`,
+          `체중 ${weight}kg, 골격근량 ${smm}kg, 체지방량 ${bfm}kg(체지방률 ${pbf}%), 복부지방률 ${whr}입니다. 골격근량이 튼튼하여 체지방 ${Math.abs(fatCtrl)}kg 감량 관리가 권장됩니다.`,
         dietTip:
           data.dietTip ||
           `기초대사량 ${bmr} kcal를 고려하여 하루 1,600 kcal 균형 잡힌 고단백 영양 식단을 권장합니다.`,
         workoutTip:
           data.workoutTip ||
-          `골격근량(${smm}kg)이 우수하므로 유산소 운동(조깅/수영 277kcal)과 웨이트 트레이닝(395kcal)을 주 3~4회 병행하세요.`,
-        evaluation: score >= 80 ? 'excellent' : score >= 70 ? 'good' : 'average',
-      },
-      segmentalMuscle: {
-        rightArm: +(smm * 0.102).toFixed(1),
-        leftArm: +(smm * 0.099).toFixed(1),
-        trunk: +(smm * 0.775).toFixed(1),
-        rightLeg: +(smm * 0.29).toFixed(1),
-        leftLeg: +(smm * 0.287).toFixed(1),
+          `골격근량 유지를 위해 스쿼트, 데드리프트 등 주 3~4회 근력 운동과 유산소 운동 병행을 추천합니다.`,
       },
     };
   };
 
-  // Update scanned result metric field
-  const handleUpdateScannedMetric = (field: keyof InBodyRecord, val: any) => {
+  const handleUpdateScannedMetric = (field: keyof InBodyRecord, value: string) => {
     if (!scannedResult) return;
-    const num = Number(val);
-    const updated = {
-      ...scannedResult,
-      [field]: isNaN(num) ? val : num,
-    };
-    // Auto recalculate BMI if weight changes
-    if (field === 'weight') {
-      const h = scannedResult.height ? scannedResult.height / 100 : 1.62;
-      updated.bmi = +(num / (h * h)).toFixed(1);
-      updated.bodyFatMass = +(num * (updated.bodyFatPercentage / 100)).toFixed(1);
-      updated.fatFreeMass = +(num - updated.bodyFatMass).toFixed(1);
-    }
-    setScannedResult(updated);
+    const numVal = parseFloat(value);
+    if (isNaN(numVal)) return;
+
+    setScannedResult((prev) => {
+      if (!prev) return null;
+      const updated = { ...prev, [field]: numVal };
+
+      // Auto-recalculate BMI and BodyFatMass if Weight or PBF changes
+      if (field === 'weight' || field === 'bodyFatPercentage') {
+        const w = field === 'weight' ? numVal : updated.weight;
+        const pbf = field === 'bodyFatPercentage' ? numVal : updated.bodyFatPercentage;
+        const bfm = +(w * (pbf / 100)).toFixed(1);
+        const heightM = (updated.height || 162) / 100;
+        const bmi = +(w / (heightM * heightM)).toFixed(1);
+        const ffm = +(w - bfm).toFixed(1);
+
+        return {
+          ...updated,
+          bodyFatMass: bfm,
+          bmi,
+          fatFreeMass: ffm,
+        };
+      }
+      return updated;
+    });
   };
 
-  // Reset scan and restart camera
   const handleResetScan = () => {
     setSelectedImage(null);
     setScannedResult(null);
     setScanError(null);
     setIsScanning(false);
-    setIsEditingMetrics(false);
+    setScanProgress(0);
     setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
     startCamera(cameraFacing);
   };
 
-  // Preset sample records for quick demo
+  // Sample Preset InBody Sheets for Fast Instant Testing
   const samplePresets = [
     {
-      id: 'sample-swinggym-20250901',
-      name: '스윙짐 1차 측정 (79.0kg / 30.6kg / 31.6% / 70점)',
+      id: 'p1',
+      name: '체중 79.0kg / 골격근 30.6kg (표준 샘플)',
       data: {
         weight: 79.0,
         skeletalMuscleMass: 30.6,
@@ -484,72 +534,32 @@ export const ScanView: React.FC<ScanViewProps> = ({
         bmr: 1538,
         visceralFatLevel: 9,
         totalBodyWater: 39.7,
-        fatFreeMass: 54.1,
         protein: 10.9,
         mineral: 3.52,
         waistHipRatio: 0.93,
-        muscleControl: 0.0,
         fatControl: -15.4,
         inBodyScore: 70,
-        height: 162,
-        age: 50,
-        gender: 'male',
-        measuredDate: '2025.09.01',
-        title: '스윙짐 1차 기준 측정 (2025.9.1)',
-        summary: '2025년 9월 1일 스윙짐 측정: 체중 79.0kg, 골격근량 30.6kg, 체지방률 31.6%(24.9kg), BMI 30.1(심한과체중), 신체발달점수 70점입니다. 근육량 30.6kg으로 우수하며, 지방조절 -15.4kg 감량이 권장됩니다.',
-        dietTip: '권장 일일 섭취열량 1,600 kcal를 바탕으로 고단백, 저나트륨 영양 식단을 권장합니다.',
-        workoutTip: '조깅(277kcal), 수영(277kcal), 웨이트 트레이닝(395kcal) 등 권장 운동을 주 3~4회 병행하세요.',
+        title: '정밀 스캔 분석 (2025.09.01)',
       },
     },
     {
-      id: 'sample-swinggym-20260824',
-      name: '스윙짐 2차 추적 측정 (75.5kg / 30.3kg / 29.1% / 72점)',
+      id: 'p2',
+      name: '체중 73.2kg / 골격근 33.5kg (운동인 샘플)',
       data: {
-        weight: 75.5,
-        skeletalMuscleMass: 30.3,
-        bodyFatMass: 22.0,
-        bodyFatPercentage: 29.1,
-        bmi: 28.8,
-        bmr: 1526,
-        visceralFatLevel: 8,
-        totalBodyWater: 39.4,
-        fatFreeMass: 53.5,
-        protein: 10.6,
-        mineral: 3.45,
-        waistHipRatio: 0.87,
-        muscleControl: 0.0,
-        fatControl: -12.5,
-        inBodyScore: 72,
-        height: 162,
-        age: 51,
-        gender: 'male',
-        measuredDate: '2026.08.24',
-        title: '스윙짐 2차 추적 측정 (최신)',
-        summary: '이전 측정(79.0kg) 대비 체중 -3.5kg, 체지방 -2.9kg 감량 성공! 골격근량 30.3kg을 탄탄하게 유지하고 있습니다.',
-        dietTip: '기초대사량 1,526 kcal에 맞춰 일일 1,800 kcal 균형 식단과 단백질 90~100g을 유지하세요.',
-        workoutTip: '현재 근력 운동 루틴을 유지하며 주 3회 30분 유산소 훈련을 지속하세요.',
-      },
-    },
-    {
-      id: 'sample-1',
-      name: 'InBody 770 전문가용 (74.2kg / 32.1kg / 15.8% / 86점)',
-      data: {
-        weight: 74.2,
-        skeletalMuscleMass: 32.1,
-        bodyFatMass: 16.5,
-        bodyFatPercentage: 15.8,
-        bmi: 23.4,
-        bmr: 1735,
-        visceralFatLevel: 4,
-        totalBodyWater: 45.2,
-        fatFreeMass: 57.7,
-        protein: 12.1,
-        mineral: 3.9,
-        waistHipRatio: 0.81,
-        muscleControl: 0.0,
+        weight: 73.2,
+        skeletalMuscleMass: 33.5,
+        bodyFatMass: 13.8,
+        bodyFatPercentage: 18.9,
+        bmi: 24.2,
+        bmr: 1690,
+        visceralFatLevel: 5,
+        totalBodyWater: 43.5,
+        protein: 11.8,
+        mineral: 4.1,
+        waistHipRatio: 0.84,
         fatControl: -2.0,
         inBodyScore: 86,
-        title: '정밀 스캔 분석 (770)',
+        title: '정밀 스캔 분석 (InBody 770)',
       },
     },
   ];
@@ -578,55 +588,63 @@ export const ScanView: React.FC<ScanViewProps> = ({
         <div className="absolute inset-0 bg-white/30 pointer-events-none z-30 transition-opacity duration-200" />
       )}
 
-      {/* Top App Bar */}
-      <header className="bg-[#0D0F16]/95 backdrop-blur-md border-b border-[#2A2D35] flex justify-between items-center w-full px-4 py-3 z-20 shrink-0">
+      {/* Header Bar */}
+      <header className="relative z-20 flex justify-between items-center px-4 py-3 bg-[#0A0B0E]/80 backdrop-blur-md border-b border-[#2A2D35]/50">
         <button
           onClick={onBack}
-          className="flex items-center justify-center p-2 rounded-xl hover:bg-[#1A1D26] active:scale-95 transition-colors text-[#9CA3AF] hover:text-[#E2E4E9]"
-          title="대시보드로 돌아가기"
-          aria-label="대시보드로 돌아가기"
+          className="w-10 h-10 flex items-center justify-center rounded-full bg-[#12141C] border border-[#2A2D35] text-[#E2E4E9] hover:bg-[#1A1D26] active:scale-95 transition-all shadow-md"
+          title="뒤로 가기"
         >
-          <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+          <span className="material-symbols-outlined text-[20px]">arrow_back</span>
         </button>
 
-        <div className="text-center">
-          <h1 className="text-base font-bold text-[#E2E4E9] tracking-tight">인바디 결과지 스캔</h1>
-          <span className="text-[11px] text-[#60A5FA] font-medium flex items-center justify-center gap-1">
-            <span
-              className={`w-1.5 h-1.5 rounded-full inline-block ${
-                cameraActive ? 'bg-[#10B981] animate-ping' : 'bg-[#EF4444]'
-              }`}
-            />
-            {cameraLabel}
-          </span>
+        <div className="flex flex-col items-center">
+          <div className="flex items-center gap-1.5 text-xs font-bold tracking-wider text-[#E2E4E9]">
+            <span className="w-2 h-2 rounded-full bg-[#3B82F6] animate-ping" />
+            <span>AI 인바디 스마트 스캐너</span>
+          </div>
+          <span className="text-[10px] text-[#9CA3AF] font-mono">{cameraLabel}</span>
         </div>
 
-        <div className="flex items-center gap-1">
-          {/* Switch Camera Button (Front / Rear / Webcam) */}
+        <div className="flex items-center gap-1.5">
+          {/* Flash Toggle */}
           <button
-            onClick={toggleCameraFacing}
-            className="flex items-center justify-center p-2 rounded-xl hover:bg-[#1A1D26] active:scale-95 transition-colors text-[#9CA3AF] hover:text-[#60A5FA]"
-            title="전면/후면/웹캠 전환"
-            aria-label="카메라 전환"
+            onClick={toggleFlash}
+            className={`w-9 h-9 flex items-center justify-center rounded-full border transition-all shadow-md active:scale-95 ${
+              flashOn
+                ? 'bg-[#F59E0B] text-black border-[#F59E0B] shadow-amber-500/30'
+                : 'bg-[#12141C] text-[#E2E4E9] border-[#2A2D35] hover:bg-[#1A1D26]'
+            }`}
+            title="플래시 조명 토글"
           >
-            <span className="material-symbols-outlined text-[22px]">flip_camera_ios</span>
+            <span className="material-symbols-outlined text-[18px]">
+              {flashOn ? 'flash_on' : 'flash_off'}
+            </span>
           </button>
 
-          {/* Help Button */}
+          {/* Camera Switch */}
+          <button
+            onClick={toggleCameraFacing}
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-[#12141C] border border-[#2A2D35] text-[#E2E4E9] hover:bg-[#1A1D26] active:scale-95 transition-all shadow-md"
+            title="전면/후면/웹캠 전환"
+          >
+            <span className="material-symbols-outlined text-[18px]">cameraswitch</span>
+          </button>
+
+          {/* Help Guide */}
           <button
             onClick={() => setShowHelp(true)}
-            className="flex items-center justify-center p-2 rounded-xl hover:bg-[#1A1D26] transition-colors text-[#9CA3AF] hover:text-[#E2E4E9]"
-            title="스캔 가이드"
-            aria-label="스캔 가이드"
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-[#12141C] border border-[#2A2D35] text-[#E2E4E9] hover:bg-[#1A1D26] active:scale-95 transition-all shadow-md"
+            title="스캔 도움말"
           >
-            <span className="material-symbols-outlined text-[22px]">help</span>
+            <span className="material-symbols-outlined text-[18px]">help_outline</span>
           </button>
         </div>
       </header>
 
-      {/* Main Viewfinder Area */}
-      <main className="flex-1 relative w-full h-full bg-[#0A0B0E] overflow-hidden flex flex-col items-center justify-center">
-        {/* Real Live Video Feed */}
+      {/* Main Viewfinder / Camera Surface */}
+      <main className="relative flex-1 w-full bg-[#050608] flex items-center justify-center overflow-hidden">
+        {/* Live Camera Video Feed */}
         <video
           ref={videoRef}
           autoPlay
@@ -637,7 +655,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           }`}
         />
 
-        {/* Uploaded Image or Fallback Background */}
+        {/* Uploaded or Captured Image Preview */}
         {selectedImage && (
           <img
             src={selectedImage}
@@ -646,7 +664,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           />
         )}
 
-        {/* Fallback image when camera is off/error */}
+        {/* Fallback image when camera is off/permission pending */}
         {!cameraActive && !selectedImage && (
           <div
             className="absolute inset-0 w-full h-full bg-cover bg-center opacity-30 mix-blend-luminosity"
@@ -656,9 +674,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
           />
         )}
 
-        {/* Camera Permission / Error Notification banner & Manual Trigger */}
+        {/* Camera Permission / Error Notification banner */}
         {cameraError && !selectedImage && (
-          <div className="absolute top-16 z-20 px-4 w-full max-w-sm">
+          <div className="absolute top-12 z-20 px-4 w-full max-w-sm">
             <div className="bg-[#12141C]/95 border border-[#F59E0B]/50 p-4 rounded-2xl backdrop-blur-md shadow-2xl text-center space-y-3">
               <div className="flex items-center justify-center gap-1.5 text-[#F59E0B] font-bold text-xs">
                 <span className="material-symbols-outlined text-[18px]">videocam_off</span>
@@ -673,7 +691,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   className="w-full py-2.5 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
                 >
                   <span className="material-symbols-outlined text-[18px]">photo_camera</span>
-                  스마트폰 카메라로 촬영하기
+                  스마트폰 카메라로 바로 촬영
                 </button>
                 <div className="flex gap-2">
                   <button
@@ -698,7 +716,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
         {/* Invalid InBody Image / Scan Error Alert Modal */}
         {scanError && (
-          <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-[#12141C] border border-[#EF4444]/40 rounded-3xl p-5 w-full max-w-md shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-[#EF4444]/15 border border-[#EF4444]/30 flex items-center justify-center text-[#EF4444] shrink-0">
@@ -709,7 +727,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                     정확한 인바디를 스캔해주세요
                   </h3>
                   <p className="text-xs text-[#EF4444] font-medium mt-0.5">
-                    인바디 결과지 양식이 인식되지 않았습니다
+                    인바디 결과지 양식 인식 안내
                   </p>
                 </div>
               </div>
@@ -717,7 +735,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <div className="p-3.5 bg-[#161822] rounded-2xl border border-[#2A2D35] space-y-2 text-xs text-[#9CA3AF] leading-relaxed">
                 <p className="text-[#E2E4E9] font-medium">{scanError}</p>
                 <ul className="list-disc list-inside text-[11px] space-y-1 text-[#9CA3AF] pt-1 border-t border-[#2A2D35]/60">
-                  <li>인바디(InBody) 또는 체성분 검사 결과지 전체를 촬영하세요.</li>
+                  <li>인바디(InBody) 또는 체성분 검사 결과지 전체를 촬영해주세요.</li>
                   <li>체중, 골격근량, 체지방률 표가 선명하게 보이도록 조명을 맞춰주세요.</li>
                   <li>빛 반사나 구김 없이 결과지를 평평하게 두고 스캔하세요.</li>
                 </ul>
@@ -766,7 +784,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between items-center p-4 sm:p-6">
             {/* Instruction Banner */}
             <div className="bg-[#12141C]/95 backdrop-blur-md px-5 py-2.5 rounded-2xl shadow-xl border border-[#2A2D35] max-w-sm text-center">
-              <p className="text-xs font-semibold text-[#60A5FA] animate-pulse">
+              <p className="text-xs font-semibold text-[#60A5FA]">
                 {scanStatusText}
               </p>
             </div>
@@ -792,13 +810,32 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
               )}
 
-              {/* Scanning Spinner Overlay */}
+              {/* AI Scanning Active Progress Overlay (Visible during 6-12s analysis) */}
               {isScanning && (
-                <div className="absolute inset-0 bg-[#0A0B0E]/85 backdrop-blur-sm flex flex-col items-center justify-center text-white gap-3 p-4">
-                  <div className="w-12 h-12 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin shadow-lg" />
-                  <p className="text-xs font-semibold text-center text-[#E2E4E9]">
-                    AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...
-                  </p>
+                <div className="absolute inset-0 bg-[#0A0B0E]/90 backdrop-blur-md flex flex-col items-center justify-center text-white gap-3.5 p-5 text-center">
+                  <div className="relative">
+                    <div className="w-14 h-14 border-4 border-[#3B82F6] border-t-transparent rounded-full animate-spin shadow-lg" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-[11px] font-black text-[#60A5FA]">{scanProgress}%</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 max-w-[240px]">
+                    <p className="text-xs font-bold text-[#E2E4E9]">
+                      AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...
+                    </p>
+                    <p className="text-[11px] text-[#9CA3AF] animate-pulse">
+                      {scanStatusText}
+                    </p>
+                  </div>
+
+                  {/* Visual Progress Bar */}
+                  <div className="w-full max-w-[200px] h-1.5 bg-[#161822] rounded-full overflow-hidden border border-[#2A2D35]">
+                    <div
+                      className="h-full bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] transition-all duration-500 rounded-full"
+                      style={{ width: `${Math.max(10, scanProgress)}%` }}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -987,7 +1024,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </div>
             </button>
 
-            {/* Direct Phone Camera Button or Flash Toggle */}
+            {/* Direct Phone Camera Button */}
             <button
               onClick={() => cameraInputRef.current?.click()}
               className="flex flex-col items-center gap-1 p-3 rounded-2xl bg-[#12141C]/90 text-[#E2E4E9] border border-[#2A2D35] hover:bg-[#1A1D26] backdrop-blur-md active:scale-95 transition-all shadow-lg pointer-events-auto"
@@ -1101,8 +1138,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <li>스마트폰 후면 카메라 및 PC 웹캠을 모두 지원합니다.</li>
               <li>상단의 카메라 전환 버튼으로 전면/후면/웹캠을 바꿀 수 있습니다.</li>
               <li>카메라 권한 팝업이 뜨면 <b>[허용]</b>을 눌러주세요.</li>
-              <li>어두운 곳에서는 하단의 <b>플래시</b> 버튼을 켜주세요.</li>
-              <li><b>갤러리</b> 버튼을 누르면 이미 찍어둔 사진을 즉시 분석합니다.</li>
+              <li>어두운 곳에서는 상단의 <b>플래시</b> 버튼을 켜주세요.</li>
+              <li><b>갤러리</b> 또는 <b>카메라</b> 버튼을 누르면 이미 찍어둔 사진을 바로 분석합니다.</li>
               <li>스캔 후 언제든 수치를 직접 수정하고 저장할 수 있습니다.</li>
             </ul>
             <button

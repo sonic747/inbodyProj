@@ -15,7 +15,7 @@ async function startServer() {
     res.json({ status: 'ok', service: 'SwingGym InBody Analytics API' });
   });
 
-  // API Route: Analyze InBody Image using Gemini Vision
+  // API Route: Analyze InBody Image using Gemini Vision OCR
   app.post('/api/analyze-inbody', async (req, res) => {
     // Helper to generate a reliable InBody baseline record if API is not set or network fails
     const generateFallbackRecord = (note?: string) => ({
@@ -74,47 +74,54 @@ async function startServer() {
       let cleanBase64 = imageBase64;
       const match = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.*)$/);
       if (match) {
-        mimeType = match[1];
+        const rawMime = match[1].toLowerCase();
+        if (['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'].includes(rawMime)) {
+          mimeType = rawMime === 'image/jpg' ? 'image/jpeg' : rawMime;
+        } else {
+          mimeType = 'image/jpeg';
+        }
         cleanBase64 = match[2];
       }
       // Remove any whitespace or newline from base64
       cleanBase64 = cleanBase64.replace(/\s+/g, '');
 
-      const prompt = `You are an expert OCR and document analysis engine specialized in InBody and body composition report sheets (체성분 분석 결과지 / 인바디 검사지 / InBody 230, 270, 370, 570, 770, InBody Dial, Accuniq, Tanita).
+      const prompt = `You are a high-precision OCR and document analysis engine specialized in InBody and body composition reports (체성분 분석 결과지 / 인바디 검사지 / InBody 770, 570, 370, 270, 230, InBody Dial, Accuniq, Tanita, mobile InBody screenshots, smart scale printouts).
 
-Task:
-1. Examine if this image is a body composition / InBody result sheet (even if photographed with a smartphone, slightly tilted, shadowed, or cropped).
-2. If the image is CLEARLY NOT a document or body composition report sheet (e.g. landscape, selfie, food, pets, random objects):
-   Return JSON with {"isValidInBody": false, "invalidReason": "인바디 결과지 형태가 인식되지 않았습니다. 인바디 검사 결과지가 선명하게 보이도록 촬영해주세요."}
-3. If it IS an InBody / 체성분 분석 결과지:
-   Extract all printed numbers accurately. Clean up any units (kg, %, kcal) and return pure numbers.
-   Fields to extract:
-   - weight: number (체중 kg, e.g. 79.0)
-   - skeletalMuscleMass: number (골격근량 kg, e.g. 30.6)
-   - bodyFatMass: number (체지방량 kg, e.g. 24.9)
-   - bodyFatPercentage: number (체지방률 %, e.g. 31.6)
-   - bmi: number (BMI, e.g. 30.1)
-   - bmr: number (기초대사량 kcal, e.g. 1538)
-   - visceralFatLevel: number (내장지방 레벨 1~20, e.g. 9)
-   - totalBodyWater: number (체수분 kg, e.g. 39.7)
-   - fatFreeMass: number (제지방량 kg, e.g. 54.1)
-   - protein: number (단백질 kg, e.g. 10.9)
-   - mineral: number (무기질 kg, e.g. 3.52)
-   - waistHipRatio: number (복부지방률, e.g. 0.93)
-   - muscleControl: number (근육조절 kg, e.g. 0.0)
-   - fatControl: number (지방조절 kg, e.g. -15.4)
-   - inBodyScore: number (신체발달점수 / InBody Score, e.g. 70)
-   - height: number (신장 cm, e.g. 162)
-   - age: number (연령, e.g. 50)
-   - gender: string ("male" | "female")
-   - measuredDate: string (측정일자, e.g. "2025.09.01")
-   - centerName: string (센터/지점명, e.g. "SWING GYM")
-   - title: string (e.g. "스윙짐 인바디 정밀 측정")
-   - summary: string (Korean assessment summary of the measurement)
-   - dietTip: string (Korean diet tip based on BMR and body fat)
-   - workoutTip: string (Korean exercise routine recommendation)
+Instructions:
+1. The user has provided an image captured with a smartphone camera or uploaded from a gallery. It may be a photo of a paper report sheet on a table, a scanned document, a screen capture of an InBody app, or a smart scale report.
+2. Even if the image has background surroundings (e.g. desk, floor, fingers holding the paper), slight rotation/perspective distortion, shadows, or partial cropping:
+   - Identify all visible body composition numbers and labels (체중/Weight, 골격근량/SMM, 체지방량/Body Fat Mass, 체지방률/Percent Body Fat, BMI, 기초대사량/BMR, 내장지방레벨/Visceral Fat, 체수분/TBW, 제지방량/FFM, 단백질/Protein, 무기질/Mineral, 복부지방률/WHR, 인바디점수/InBody Score, 신장/Height, 연령/Age, 성별/Gender, 측정일시/Date, 검사기관/Center).
+   - Set "isValidInBody": true and extract the numbers accurately.
+3. ONLY if the image is COMPLETELY UNRELATED and has NO numbers or body composition metrics at all (e.g. an outdoor landscape, animal, selfie with no document, coffee cup):
+   - Set "isValidInBody": false, "invalidReason": "인바디 결과지 양식이 인식되지 않았습니다. 결과지의 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영해주세요."
 
-Return ONLY valid JSON matching this schema:
+Fields to extract (clean up any units like kg, %, kcal, cm, and return pure numbers or strings):
+- weight: number (체중 kg, e.g. 79.0)
+- skeletalMuscleMass: number (골격근량 kg, e.g. 30.6)
+- bodyFatMass: number (체지방량 kg, e.g. 24.9)
+- bodyFatPercentage: number (체지방률 %, e.g. 31.6)
+- bmi: number (BMI, e.g. 30.1)
+- bmr: number (기초대사량 kcal, e.g. 1538)
+- visceralFatLevel: number (내장지방 레벨 1~20, e.g. 9)
+- totalBodyWater: number (체수분 kg, e.g. 39.7)
+- fatFreeMass: number (제지방량 kg, e.g. 54.1)
+- protein: number (단백질 kg, e.g. 10.9)
+- mineral: number (무기질 kg, e.g. 3.52)
+- waistHipRatio: number (복부지방률, e.g. 0.93)
+- muscleControl: number (근육조절 kg, e.g. 0.0)
+- fatControl: number (지방조절 kg, e.g. -15.4)
+- inBodyScore: number (신체발달점수 / InBody Score, e.g. 70)
+- height: number (신장 cm, e.g. 162)
+- age: number (연령, e.g. 50)
+- gender: string ("male" | "female")
+- measuredDate: string (측정일자, e.g. "2025.09.01" or "2024.12.15")
+- centerName: string (검사기관/센터명, e.g. "SWING GYM" or printed center name)
+- title: string (e.g. "스윙짐 인바디 정밀 측정")
+- summary: string (Korean expert clinical summary evaluating muscle mass and fat ratio)
+- dietTip: string (Korean customized dietary tip based on BMR and body fat goals)
+- workoutTip: string (Korean customized workout recommendation for muscle retention and fat burning)
+
+Return strictly valid JSON only:
 {
   "isValidInBody": true,
   "invalidReason": "",
@@ -139,9 +146,9 @@ Return ONLY valid JSON matching this schema:
   "measuredDate": "2025.09.01",
   "centerName": "SWING GYM",
   "title": "스윙짐 인바디 정밀 측정",
-  "summary": "체중 79.0kg, 골격근량 30.6kg...",
-  "dietTip": "일일 권장 섭취열량...",
-  "workoutTip": "권장 운동 루틴..."
+  "summary": "체중 79.0kg, 골격근량 30.6kg, 체지방률 31.6%로 측정되었습니다.",
+  "dietTip": "기초대사량 1,538 kcal에 맞춘 균형 잡힌 단백질 위주 식단을 권장합니다.",
+  "workoutTip": "골격근량 유지와 체지방 감량을 위해 주 3회 근력 운동 및 유산소 30분을 권장합니다."
 }`;
 
       try {
@@ -170,7 +177,7 @@ Return ONLY valid JSON matching this schema:
         });
 
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('OCR Timeout')), 22000)
+          setTimeout(() => reject(new Error('OCR Timeout')), 25000)
         );
 
         const response: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -185,7 +192,7 @@ Return ONLY valid JSON matching this schema:
           });
         }
 
-        // Helper to parse numbers safely from strings like "79.0 kg", "1,538", etc.
+        // Helper to parse numbers safely from strings like "79.0 kg", "1,538", "30.6kg", etc.
         const parseNum = (val: any) => {
           if (typeof val === 'number') return isNaN(val) ? undefined : val;
           if (typeof val === 'string') {
