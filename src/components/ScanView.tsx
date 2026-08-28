@@ -608,12 +608,21 @@ export const ScanView: React.FC<ScanViewProps> = ({
         try {
           const startTime = Date.now();
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 35000);
+          const timeoutId = setTimeout(() => controller.abort(), 55000);
 
-          addDebugLog('info', 'POST /api/analyze-inbody 서버 요청 발송');
-          const res = await fetch('/api/analyze-inbody', {
+          const endpointUrl = `${window.location.origin}/api/analyze-inbody`;
+          addDebugLog('info', `POST ${endpointUrl} 서버 요청 발송`, {
+            origin: window.location.origin,
+            timeout: '55s',
+            payloadSizeKB: (imageToAnalyze.length / 1024).toFixed(1) + ' KB',
+          });
+
+          const res = await fetch(endpointUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
             body: JSON.stringify({ imageBase64: imageToAnalyze }),
             signal: controller.signal,
           });
@@ -621,17 +630,28 @@ export const ScanView: React.FC<ScanViewProps> = ({
           if (progressTimer) clearInterval(progressTimer);
 
           const elapsed = Date.now() - startTime;
-          const parsed = await res.json().catch((jsonErr) => {
-            addDebugLog('error', '서버 응답 JSON 파싱 실패', { err: String(jsonErr) });
-            return {};
-          });
+          const rawResponseText = await res.text().catch(() => '');
+          let parsed: any = {};
+
+          try {
+            parsed = JSON.parse(rawResponseText);
+          } catch (jsonErr: any) {
+            addDebugLog('error', `서버 응답 JSON 파싱 실패 (HTTP ${res.status})`, {
+              status: res.status,
+              statusText: res.statusText,
+              rawSnippet: rawResponseText.slice(0, 300),
+              jsonErr: String(jsonErr),
+            });
+          }
 
           if (parsed._debug) {
             setServerDebug(parsed._debug);
           }
 
           addDebugLog(
-            res.ok && parsed.isValidInBody !== false ? 'success' : 'warn',
+            res.ok && parsed.isValidInBody !== false && typeof parsed.weight === 'number'
+              ? 'success'
+              : 'warn',
             `서버 응답 수신 (HTTP ${res.status}, ${elapsed}ms)`,
             {
               status: res.status,
@@ -640,7 +660,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               extractedSmm: parsed.skeletalMuscleMass,
               extractedPbf: parsed.bodyFatPercentage,
               usedModel: parsed._debug?.successfulModel,
-              error: parsed.error,
+              error: parsed.error || (res.status === 405 ? 'HTTP 405 Method Not Allowed' : undefined),
             }
           );
 
@@ -657,10 +677,19 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
           // If the AI flagged it as not a valid InBody sheet or OCR failed to read metrics:
           setIsScanning(false);
-          const errorMsg =
-            parsed?.error ||
-            '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.';
+          let errorMsg = parsed?.error;
+          if (!errorMsg) {
+            if (res.status === 405) {
+              errorMsg = '모바일 웹뷰에서 API 접근이 제한되었습니다 (HTTP 405). 다시 시도해주세요.';
+            } else if (res.status === 500) {
+              errorMsg = '서버 AI 분석 중 일시적 오류가 발생했습니다. 다시 시도해주세요.';
+            } else {
+              errorMsg = '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.';
+            }
+          }
+
           addDebugLog('error', '인바디 검증/인식 실패 (모달 노출)', {
+            httpStatus: res.status,
             errorMsg,
             serverDebugData: parsed._debug,
           });
@@ -675,7 +704,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
             message: fetchErr?.message,
           });
           setScanError(
-            '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
+            fetchErr?.name === 'AbortError'
+              ? '인바디 분석 응답 시간(55초)이 초과되었습니다. 사진을 다시 첨부하거나 직접 수치를 입력해주세요.'
+              : '인바디 분석 중 통신 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
           );
           return;
         }

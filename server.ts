@@ -7,6 +7,17 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Global CORS & Preflight Middleware (Essential for mobile in-app webviews like KakaoTalk / Safari)
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -15,7 +26,11 @@ async function startServer() {
     res.json({ status: 'ok', service: 'SwingGym InBody Analytics API' });
   });
 
-  // API Route: Analyze InBody Image using Gemini Vision OCR
+  // API Route: Analyze InBody Image using Gemini Vision OCR (support both POST and OPTIONS safely)
+  app.options('/api/analyze-inbody', (req, res) => {
+    res.status(204).end();
+  });
+
   app.post('/api/analyze-inbody', async (req, res) => {
     const startTime = Date.now();
     const serverLogs: Array<{ step: string; timestamp: string; details?: any }> = [];
@@ -26,9 +41,12 @@ async function startServer() {
     };
 
     addLog('Request received', {
+      method: req.method,
+      url: req.url,
       headers: {
         'content-type': req.headers['content-type'],
         'user-agent': req.headers['user-agent']?.slice(0, 100),
+        'origin': req.headers['origin'] || req.headers['referer'] || 'same-origin',
       },
     });
 
@@ -158,7 +176,7 @@ Return ONLY valid JSON matching this schema:
       try {
         let responseText = '';
         let successfulModel = '';
-        const modelsToTry = ['gemini-2.5-flash', 'gemini-3.7-flash', 'gemini-2.5-pro'];
+        const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
         const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
         let lastErr: any = null;
 
