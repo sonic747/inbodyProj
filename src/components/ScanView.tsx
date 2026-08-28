@@ -15,10 +15,16 @@ export const ScanView: React.FC<ScanViewProps> = ({
   onScanComplete,
   onOpenManualEntry,
 }) => {
+  const mainContainerRef = useRef<HTMLElement>(null);
+  const reticleRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Dynamic input keys to guarantee fresh photo upload every single time
+  const [fileInputKey, setFileInputKey] = useState<number>(() => Date.now());
+  const [cameraInputKey, setCameraInputKey] = useState<number>(() => Date.now() + 1);
 
   // Camera & Device State
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
@@ -30,6 +36,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   // Photo & Preview State (User inspects photo BEFORE running AI OCR)
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [originalFullImage, setOriginalFullImage] = useState<string | null>(null);
+  const [isCroppedView, setIsCroppedView] = useState(true);
   const [imageMeta, setImageMeta] = useState<{ width?: number; height?: number }>({});
 
   // Scan & Progress State
@@ -237,6 +245,71 @@ export const ScanView: React.FC<ScanViewProps> = ({
     });
   };
 
+  // Safe Native Camera & Gallery Triggers that guarantee fresh photo capture
+  const openNativeCamera = () => {
+    setCameraInputKey(Date.now());
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+      setTimeout(() => {
+        cameraInputRef.current?.click();
+      }, 50);
+    }
+  };
+
+  const openGallery = () => {
+    setFileInputKey(Date.now());
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      setTimeout(() => {
+        fileInputRef.current?.click();
+      }, 50);
+    }
+  };
+
+  // Helper to crop image to InBody aspect ratio (e.g. 1 : 1.35)
+  const cropImageToInBodyRatio = (
+    imageSrc: string
+  ): Promise<{ croppedBase64: string; width: number; height: number }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
+        const targetRatio = 1 / 1.35; // Standard InBody paper vertical aspect ratio
+
+        let cropW = origW;
+        let cropH = Math.round(origW / targetRatio);
+
+        if (cropH > origH) {
+          cropH = origH;
+          cropW = Math.round(origH * targetRatio);
+        }
+
+        const cropX = Math.max(0, Math.round((origW - cropW) / 2));
+        const cropY = Math.max(0, Math.round((origH - cropH) / 2));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = cropW;
+        canvas.height = cropH;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+          resolve({
+            croppedBase64: canvas.toDataURL('image/jpeg', 0.92),
+            width: cropW,
+            height: cropH,
+          });
+          return;
+        }
+        resolve({ croppedBase64: imageSrc, width: origW, height: origH });
+      };
+      img.onerror = () => {
+        resolve({ croppedBase64: imageSrc, width: 0, height: 0 });
+      };
+      img.src = imageSrc;
+    });
+  };
+
   // Handle Smartphone Camera / Gallery file upload -> Enters Preview Mode for verification!
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -248,50 +321,119 @@ export const ScanView: React.FC<ScanViewProps> = ({
     try {
       const result = await compressImageFile(file);
       if (!result.base64) {
-        setScanError('이미지 파일을 읽을 수 없습니다. 다시 선택해주세요.');
+        setScanError('이미지 파일을 읽을 수 없습니다. 다시 촬영해주세요.');
         return;
       }
 
-      setPreviewImage(result.base64);
-      setImageMeta({ width: result.width, height: result.height });
+      setOriginalFullImage(result.base64);
+
+      // Also create a centered InBody crop for crisp readability
+      const cropResult = await cropImageToInBodyRatio(result.base64);
+      setPreviewImage(cropResult.croppedBase64 || result.base64);
+      setImageMeta({
+        width: cropResult.width || result.width,
+        height: cropResult.height || result.height,
+      });
+      setIsCroppedView(true);
       setShowSamplePicker(false);
-      // Notice: We do NOT immediately analyze. The user can preview and verify resolution/range first!
     } catch (err) {
       console.warn('Image processing error:', err);
       setScanError('이미지 처리 중 문제가 발생했습니다. 다른 사진으로 시도해주세요.');
     } finally {
-      e.target.value = '';
+      if (e.target) {
+        e.target.value = '';
+      }
     }
   };
 
-  // Capture live video frame -> Enters Preview Mode for verification!
+  // Capture live video frame -> CROPS PRECISELY to the Blue Alignment Reticle Frame!
   const captureCameraFrame = () => {
-    if (videoRef.current && cameraActive && videoRef.current.videoWidth > 100) {
+    if (
+      videoRef.current &&
+      mainContainerRef.current &&
+      reticleRef.current &&
+      cameraActive &&
+      videoRef.current.videoWidth > 100
+    ) {
       try {
         const video = videoRef.current;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.min(video.videoWidth, 1920);
-        canvas.height = Math.min(video.videoHeight, 1080);
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const base64 = canvas.toDataURL('image/jpeg', 0.88);
+        const container = mainContainerRef.current;
+        const reticle = reticleRef.current;
+
+        const containerRect = container.getBoundingClientRect();
+        const reticleRect = reticle.getBoundingClientRect();
+
+        const cWidth = containerRect.width;
+        const cHeight = containerRect.height;
+        const vWidth = video.videoWidth;
+        const vHeight = video.videoHeight;
+
+        // The video is styled with "object-cover absolute inset-0 w-full h-full"
+        const scale = Math.max(cWidth / vWidth, cHeight / vHeight);
+        const renderedWidth = vWidth * scale;
+        const renderedHeight = vHeight * scale;
+
+        const offsetX = (cWidth - renderedWidth) / 2;
+        const offsetY = (cHeight - renderedHeight) / 2;
+
+        // Position of the blue reticle frame relative to container
+        const rLeft = reticleRect.left - containerRect.left;
+        const rTop = reticleRect.top - containerRect.top;
+        const rWidth = reticleRect.width;
+        const rHeight = reticleRect.height;
+
+        // Position of reticle relative to the rendered video coordinate space
+        const cropXOnRendered = rLeft - offsetX;
+        const cropYOnRendered = rTop - offsetY;
+
+        // Map back into native video pixel coordinates
+        let sx = cropXOnRendered / scale;
+        let sy = cropYOnRendered / scale;
+        let sWidth = rWidth / scale;
+        let sHeight = rHeight / scale;
+
+        // Add a gentle 2% margin so edges of the InBody result sheet are not accidentally clipped
+        const padX = sWidth * 0.02;
+        const padY = sHeight * 0.02;
+        sx = Math.max(0, sx - padX);
+        sy = Math.max(0, sy - padY);
+        sWidth = Math.min(vWidth - sx, sWidth + padX * 2);
+        sHeight = Math.min(vHeight - sy, sHeight + padY * 2);
+
+        // Render full image for toggle fallback
+        const fullCanvas = document.createElement('canvas');
+        fullCanvas.width = vWidth;
+        fullCanvas.height = vHeight;
+        const fullCtx = fullCanvas.getContext('2d');
+        let fullBase64 = '';
+        if (fullCtx) {
+          fullCtx.drawImage(video, 0, 0, vWidth, vHeight);
+          fullBase64 = fullCanvas.toDataURL('image/jpeg', 0.88);
+          setOriginalFullImage(fullBase64);
+        }
+
+        // Render CROPPED frame canvas (exactly the blue guide box)
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = Math.round(sWidth);
+        cropCanvas.height = Math.round(sHeight);
+        const cropCtx = cropCanvas.getContext('2d');
+
+        if (cropCtx) {
+          cropCtx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, cropCanvas.width, cropCanvas.height);
+          const croppedBase64 = cropCanvas.toDataURL('image/jpeg', 0.94);
           stopCurrentStream();
-          setPreviewImage(base64);
-          setImageMeta({ width: video.videoWidth, height: video.videoHeight });
+          setPreviewImage(croppedBase64);
+          setIsCroppedView(true);
+          setImageMeta({ width: cropCanvas.width, height: cropCanvas.height });
           return;
         }
       } catch (e) {
-        console.warn('Live capture canvas error:', e);
+        console.warn('Live frame crop error:', e);
       }
     }
 
-    // If live camera is not streaming (e.g. mobile browser limitations), trigger native camera
-    if (cameraInputRef.current) {
-      cameraInputRef.current.click();
-    } else if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
+    // If live camera stream is not available or failed, open native smartphone camera
+    openNativeCamera();
   };
 
   // AI & OCR Scan Analysis (Starts when user presses the Start OCR button in preview)
@@ -526,6 +668,8 @@ export const ScanView: React.FC<ScanViewProps> = ({
   // Retake photo or reset preview
   const handleRetakePhoto = () => {
     setPreviewImage(null);
+    setOriginalFullImage(null);
+    setIsCroppedView(true);
     setImageMeta({});
     setScannedResult(null);
     setScanError(null);
@@ -581,8 +725,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   return (
     <div className="relative w-full h-[calc(100vh-4.5rem)] md:h-[760px] md:max-w-2xl md:mx-auto bg-[#0A0B0E] overflow-hidden flex flex-col justify-between md:rounded-3xl md:border md:border-[#2A2D35] md:shadow-2xl">
-      {/* Hidden File Inputs for Smartphone Native Camera & Gallery */}
+      {/* Hidden File Inputs with dynamic keys ensuring fresh camera/photo capture */}
       <input
+        key={`file-${fileInputKey}`}
         type="file"
         ref={fileInputRef}
         onChange={handleFileUpload}
@@ -590,6 +735,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         className="hidden"
       />
       <input
+        key={`cam-${cameraInputKey}`}
         type="file"
         ref={cameraInputRef}
         onChange={handleFileUpload}
@@ -622,12 +768,12 @@ export const ScanView: React.FC<ScanViewProps> = ({
               {scannedResult
                 ? '인바디 분석 완료'
                 : previewImage
-                ? '촬영된 결과지 사진 확인'
+                ? '결과지 프레임 영역 확인'
                 : 'AI 인바디 스마트 스캐너'}
             </span>
           </div>
           <span className="text-[10px] text-[#9CA3AF] font-mono">
-            {previewImage ? '사진 검토 후 분석 버튼을 누르세요' : cameraLabel}
+            {previewImage ? (isCroppedView ? '프레임 맞춤 영역' : '원본 전체 사진') : cameraLabel}
           </span>
         </div>
 
@@ -672,7 +818,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
       </header>
 
       {/* Main Surface Area */}
-      <main className="relative flex-1 w-full bg-[#050608] flex items-center justify-center overflow-hidden">
+      <main
+        ref={mainContainerRef}
+        className="relative flex-1 w-full bg-[#050608] flex items-center justify-center overflow-hidden"
+      >
         {/* ========================================================================= */}
         {/* VIEW 1: Live Viewfinder / Camera Screen (Before taking photo)            */}
         {/* ========================================================================= */}
@@ -712,7 +861,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   </p>
                   <div className="flex flex-col gap-2 pt-1">
                     <button
-                      onClick={() => cameraInputRef.current?.click()}
+                      onClick={openNativeCamera}
                       className="w-full py-2.5 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
                     >
                       <span className="material-symbols-outlined text-[18px]">photo_camera</span>
@@ -720,7 +869,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                     </button>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => fileInputRef.current?.click()}
+                        onClick={openGallery}
                         className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] font-bold text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
                       >
                         <span className="material-symbols-outlined text-[16px]">photo_library</span>
@@ -748,8 +897,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </p>
               </div>
 
-              {/* Alignment Reticle */}
-              <div className="w-full max-w-xs sm:max-w-sm aspect-[1/1.35] border-2 border-[#3B82F6]/50 rounded-2xl relative overflow-hidden bg-[#3B82F6]/5 backdrop-blur-[1px] shadow-2xl">
+              {/* Alignment Reticle (Target Crop Area) */}
+              <div
+                ref={reticleRef}
+                className="w-full max-w-xs sm:max-w-sm aspect-[1/1.35] border-2 border-[#3B82F6]/60 rounded-2xl relative overflow-hidden bg-[#3B82F6]/5 backdrop-blur-[1px] shadow-2xl"
+              >
                 {/* Corner Guides */}
                 <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-[#3B82F6] rounded-tl-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
                 <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-[#3B82F6] rounded-tr-xl shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
@@ -786,12 +938,12 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <span className="text-xs font-medium">갤러리</span>
               </button>
 
-              {/* Center Shutter Button (Takes photo and moves to Preview Verification) */}
+              {/* Center Shutter Button (Takes photo and CROPS PRECISELY to the blue reticle frame) */}
               <button
                 onClick={captureCameraFrame}
                 className="w-20 h-20 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] rounded-full border-4 border-[#2A2D35] shadow-2xl shadow-blue-500/30 flex items-center justify-center active:scale-90 hover:from-[#2563EB] hover:to-[#7C3AED] transition-all group pointer-events-auto"
-                title="인바디 결과지 촬영하기"
-                aria-label="인바디 결과지 촬영하기"
+                title="가이드 영역 촬영하기"
+                aria-label="가이드 영역 촬영하기"
               >
                 <div className="w-16 h-16 bg-white/15 backdrop-blur-sm rounded-full flex items-center justify-center group-hover:bg-white/25 transition-colors">
                   <span className="material-symbols-outlined text-white text-3xl">
@@ -802,7 +954,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
               {/* Direct Phone Native Camera Button */}
               <button
-                onClick={() => cameraInputRef.current?.click()}
+                onClick={openNativeCamera}
                 className="flex flex-col items-center gap-1 p-3 rounded-2xl bg-[#12141C]/90 text-[#E2E4E9] border border-[#2A2D35] hover:bg-[#1A1D26] backdrop-blur-md active:scale-95 transition-all shadow-lg pointer-events-auto"
                 title="스마트폰 고화질 카메라 촬영"
               >
@@ -819,7 +971,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         {/* VIEW 2: Photo Preview & Verification Screen (Before OCR Trigger)         */}
         {/* ========================================================================= */}
         {previewImage && !scannedResult && !isScanning && (
-          <div className="absolute inset-0 z-20 flex flex-col justify-between bg-[#0A0B0E] p-4 overflow-y-auto">
+          <div className="absolute inset-0 z-20 flex flex-col justify-between bg-[#0A0B0E] p-3 sm:p-4 overflow-y-auto">
             {/* Top Guide Banner */}
             <div className="bg-[#12141C] border border-[#3B82F6]/40 p-3 rounded-2xl flex items-center justify-between shadow-lg">
               <div className="flex items-center gap-2.5">
@@ -827,9 +979,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   <span className="material-symbols-outlined text-[18px]">crop_free</span>
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-[#E2E4E9]">촬영된 이미지 검토</h4>
+                  <h4 className="text-xs font-bold text-[#E2E4E9]">
+                    {isCroppedView ? '프레임 맞춤 영역 검토' : '원본 전체 이미지 검토'}
+                  </h4>
                   <p className="text-[10px] text-[#9CA3AF]">
-                    숫자와 표가 선명하게 보이는지 확인 후 분석을 시작하세요
+                    인바디 결과지 글자와 표가 선명하게 보이는지 확인하세요
                   </p>
                 </div>
               </div>
@@ -840,28 +994,64 @@ export const ScanView: React.FC<ScanViewProps> = ({
               )}
             </div>
 
+            {/* Toggle between Cropped Frame Area & Full Image (if full image exists) */}
+            {originalFullImage && (
+              <div className="flex items-center gap-1.5 bg-[#12141C] p-1 rounded-xl border border-[#2A2D35] my-1.5">
+                <button
+                  onClick={async () => {
+                    setIsCroppedView(true);
+                    const cropRes = await cropImageToInBodyRatio(originalFullImage);
+                    setPreviewImage(cropRes.croppedBase64);
+                    setImageMeta({ width: cropRes.width, height: cropRes.height });
+                  }}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    isCroppedView
+                      ? 'bg-[#3B82F6] text-white shadow-md'
+                      : 'text-[#9CA3AF] hover:text-[#E2E4E9]'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">crop</span>
+                  가이드 프레임 영역 (권장)
+                </button>
+                <button
+                  onClick={() => {
+                    setIsCroppedView(false);
+                    setPreviewImage(originalFullImage);
+                  }}
+                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    !isCroppedView
+                      ? 'bg-[#3B82F6] text-white shadow-md'
+                      : 'text-[#9CA3AF] hover:text-[#E2E4E9]'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[15px]">fullscreen</span>
+                  원본 전체 보기
+                </button>
+              </div>
+            )}
+
             {/* Photo Preview Container */}
-            <div className="relative my-3 flex-1 min-h-[220px] max-h-[360px] bg-[#050608] rounded-2xl border border-[#2A2D35] overflow-hidden flex items-center justify-center shadow-inner group">
+            <div className="relative my-2 flex-1 min-h-[250px] max-h-[380px] bg-[#050608] rounded-2xl border-2 border-[#3B82F6]/40 overflow-hidden flex items-center justify-center shadow-inner group">
               <img
                 src={previewImage}
-                alt="촬영된 인바디 결과지 미리보기"
+                alt="촬영된 인바디 결과지 프레임 미리보기"
                 className="w-full h-full object-contain"
               />
 
               {/* Target Scan Corner Overlay */}
-              <div className="absolute inset-2 border border-[#3B82F6]/30 rounded-xl pointer-events-none" />
-              <div className="absolute top-4 left-4 w-5 h-5 border-t-2 border-l-2 border-[#60A5FA] pointer-events-none" />
-              <div className="absolute top-4 right-4 w-5 h-5 border-t-2 border-r-2 border-[#60A5FA] pointer-events-none" />
-              <div className="absolute bottom-4 left-4 w-5 h-5 border-b-2 border-l-2 border-[#60A5FA] pointer-events-none" />
-              <div className="absolute bottom-4 right-4 w-5 h-5 border-b-2 border-r-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute inset-2 border border-[#3B82F6]/20 rounded-xl pointer-events-none" />
+              <div className="absolute top-3 left-3 w-5 h-5 border-t-2 border-l-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute top-3 right-3 w-5 h-5 border-t-2 border-r-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute bottom-3 left-3 w-5 h-5 border-b-2 border-l-2 border-[#60A5FA] pointer-events-none" />
+              <div className="absolute bottom-3 right-3 w-5 h-5 border-b-2 border-r-2 border-[#60A5FA] pointer-events-none" />
 
-              <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-sm text-[10px] text-[#9CA3AF] px-2 py-1 rounded-md">
-                미리보기 확인
+              <div className="absolute bottom-2 right-2 bg-black/80 backdrop-blur-md text-[10px] text-[#60A5FA] font-bold px-2 py-1 rounded-md border border-[#2A2D35]">
+                {isCroppedView ? '📐 가이드 프레임 추출본' : '🖼️ 원본 전체'}
               </div>
             </div>
 
             {/* Verification Checklist */}
-            <div className="bg-[#12141C] border border-[#2A2D35] p-3 rounded-2xl space-y-1.5 text-[11px] mb-3">
+            <div className="bg-[#12141C] border border-[#2A2D35] p-2.5 rounded-2xl space-y-1 text-[11px] mb-2">
               <div className="flex items-center gap-2 text-[#34D399] font-semibold">
                 <span className="material-symbols-outlined text-[14px]">check_circle</span>
                 <span>체중, 골격근량, 체지방률 숫자가 선명하게 보이나요?</span>
@@ -893,7 +1083,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </button>
 
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openGallery}
                   className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#60A5FA] font-semibold text-xs rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px]">photo_library</span>
@@ -981,7 +1171,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   onClick={() => {
                     setScanError(null);
                     setPreviewImage(null);
-                    cameraInputRef.current?.click();
+                    openNativeCamera();
                   }}
                   className="w-full py-3 px-4 bg-[#3B82F6] hover:bg-[#2563EB] active:scale-95 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
                 >
@@ -993,7 +1183,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                     onClick={() => {
                       setScanError(null);
                       setPreviewImage(null);
-                      fileInputRef.current?.click();
+                      openGallery();
                     }}
                     className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#60A5FA] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
                   >
@@ -1191,7 +1381,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <button
                 onClick={() => {
                   setShowSamplePicker(false);
-                  cameraInputRef.current?.click();
+                  openNativeCamera();
                 }}
                 className="w-full py-3.5 px-4 bg-gradient-to-r from-[#3B82F6] to-[#2563EB] hover:from-[#2563EB] hover:to-[#1D4ED8] active:scale-95 text-white font-bold rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/25"
               >
@@ -1202,7 +1392,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <button
                 onClick={() => {
                   setShowSamplePicker(false);
-                  fileInputRef.current?.click();
+                  openGallery();
                 }}
                 className="w-full py-3 px-4 border border-[#3B82F6]/60 bg-[#1A1D26] hover:bg-[#202534] active:scale-95 text-[#60A5FA] font-bold rounded-2xl flex items-center justify-center gap-2 transition-all shadow-md"
               >
