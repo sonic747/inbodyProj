@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary: #3B82F6;
+    --primary-container: #2563eb;
+    --on-primary-container: #ffffff;
+    --secondary: #8B5CF6;
+    --secondary-container: #a855f7;
+    --on-secondary-container: #ffffff;
+    --tertiary: #10B981;
+    --tertiary-container: #059669;
+    --background: #0A0B0E;
+    --surface: #12141C;
+    --surface-container-lowest: #0A0B0E;
+    --surface-container-low: #0D0F16;
+    --surface-container: #12141C;
+    --surface-container-high: #1A1D26;
+    --surface-container-highest: #2A2D35;
+    --on-surface: #E2E4E9;
+    --on-surface-variant: #9CA3AF;
+    --outline: #6B7280;
+    --outline-variant: #2A2D35;
+  }
+
+  body {
+    font-family: 'Inter', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #0A0B0E;
+    color: #E2E4E9;
+  }
+
+  /* Custom dark scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0D0F16;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2A2D35;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3E424B;
+  }
+}
+
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  display: inline-block;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+  word-wrap: normal;
+  white-space: nowrap;
+  direction: ltr;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.material-symbols-outlined.fill,
+.material-symbols-outlined.fill-icon {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+@keyframes scan-animation {
+  0% {
+    top: 0%;
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.9;
+  }
+  85% {
+    opacity: 0.9;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+.animate-scan {
+  animation: scan-animation 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
