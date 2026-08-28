@@ -32,6 +32,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [scanStatusText, setScanStatusText] = useState('인바디 결과지를 프레임 안에 맞춰주세요.');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [scannedResult, setScannedResult] = useState<InBodyRecord | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const [showSamplePicker, setShowSamplePicker] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
@@ -245,6 +246,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const triggerScanAnalysis = async (customImageBase64?: string, presetData?: any) => {
     setIsScanning(true);
     setScannedResult(null);
+    setScanError(null);
     setIsEditingMetrics(false);
     setScanStatusText('⚡ AI 고속 스마트 OCR 분석 중 (결과지 영역 감지)...');
 
@@ -264,7 +266,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         setScanStatusText('⚡ 체성분 지표(체중, 골격근, 체지방) 정밀 판독 중...');
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 18000);
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
 
           const res = await fetch('/api/analyze-inbody', {
             method: 'POST',
@@ -276,49 +278,45 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
           if (res.ok) {
             const parsed = await res.json();
+            if (parsed.isValidInBody === false) {
+              setIsScanning(false);
+              setScanError(
+                parsed.error ||
+                  '인바디 결과지 양식이 인식되지 않았습니다. 인바디/체성분 검사 결과지 전체가 선명하게 나오도록 정확히 스캔해주세요.'
+              );
+              return;
+            }
+
             if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
               const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
               setScannedResult(record);
               return;
             }
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            setIsScanning(false);
+            setScanError(
+              errData.error ||
+                '인바디 결과지 양식이 아닙니다. 정확한 인바디 검사 결과지를 프레임에 맞춰 다시 스캔해주세요.'
+            );
+            return;
           }
         } catch (fetchErr) {
-          console.warn('OCR fetch error or timeout, applying intelligent fallback:', fetchErr);
+          console.warn('OCR fetch error or timeout:', fetchErr);
+          setIsScanning(false);
+          setScanError(
+            '인바디 분석 시간 초과 또는 네트워크 오류가 발생했습니다. 조명이 밝은 곳에서 결과지를 평평하게 두고 다시 촬영해주세요.'
+          );
+          return;
         }
       }
 
-      // Accurate fallback matching Swing Gym InBody sheet (2025.09.01)
-      const fallback = {
-        weight: 79.0,
-        skeletalMuscleMass: 30.6,
-        bodyFatMass: 24.9,
-        bodyFatPercentage: 31.6,
-        bmi: 30.1,
-        bmr: 1538,
-        visceralFatLevel: 9,
-        totalBodyWater: 39.7,
-        fatFreeMass: 54.1,
-        protein: 10.9,
-        mineral: 3.52,
-        waistHipRatio: 0.93,
-        muscleControl: 0.0,
-        fatControl: -15.4,
-        inBodyScore: 70,
-        height: 162,
-        age: 50,
-        gender: 'male',
-        measuredDate: '2025.09.01',
-        title: '스윙짐 1차 기준 측정 (2025.9.1)',
-        summary: '체중 79.0kg(심한과체중), 골격근량 30.6kg(우수), 체지방량 24.9kg(31.6%, 비만), 복부지방률 0.93, 신체발달점수 70점입니다. 골격근량이 30.6kg으로 잘 발달되어 있어 체지방 -15.4kg 감량 플랜을 진행하기에 이상적입니다.',
-        dietTip: '일일 권장 섭취열량 1,600 kcal를 기준으로 고단백질, 복합 탄수화물, 풍부한 채소 위주의 식단을 권장합니다.',
-        workoutTip: '30분 기준 조깅(277kcal), 수영(277kcal), 웨이트 트레이닝(395kcal) 등 권장 운동을 주 3~4회 규칙적으로 실행하세요.',
-      };
-      const record = createRecordFromParsed(fallback, imageToAnalyze || undefined);
       setIsScanning(false);
-      setScannedResult(record);
+      setScanError('인바디 결과지 이미지를 촬영하거나 업로드해주세요.');
     } catch {
       setIsScanning(false);
+      setScanError('인바디 결과지 양식이 아닙니다. 정확한 인바디 결과지를 스캔해주세요.');
       setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
     }
   };
@@ -437,6 +435,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const handleResetScan = () => {
     setSelectedImage(null);
     setScannedResult(null);
+    setScanError(null);
     setIsScanning(false);
     setIsEditingMetrics(false);
     setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
@@ -647,6 +646,68 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   <span className="material-symbols-outlined text-[16px]">photo_library</span>
                   갤러리 사진 선택
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Invalid InBody Image / Scan Error Alert Modal */}
+        {scanError && (
+          <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#12141C] border border-[#EF4444]/40 rounded-3xl p-5 w-full max-w-md shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-[#EF4444]/15 border border-[#EF4444]/30 flex items-center justify-center text-[#EF4444] shrink-0">
+                  <span className="material-symbols-outlined text-[28px]">document_scanner</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-[#E2E4E9]">
+                    정확한 인바디를 스캔해주세요
+                  </h3>
+                  <p className="text-xs text-[#EF4444] font-medium mt-0.5">
+                    인바디 결과지 양식이 인식되지 않았습니다
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-[#161822] rounded-2xl border border-[#2A2D35] space-y-2 text-xs text-[#9CA3AF] leading-relaxed">
+                <p className="text-[#E2E4E9] font-medium">{scanError}</p>
+                <ul className="list-disc list-inside text-[11px] space-y-1 text-[#9CA3AF] pt-1 border-t border-[#2A2D35]/60">
+                  <li>인바디(InBody) 또는 체성분 검사 결과지 전체를 촬영하세요.</li>
+                  <li>체중, 골격근량, 체지방률 표가 선명하게 보이도록 조명을 맞춰주세요.</li>
+                  <li>빛 반사나 구김 없이 결과지를 평평하게 두고 스캔하세요.</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  onClick={handleResetScan}
+                  className="w-full py-3 px-4 bg-[#3B82F6] hover:bg-[#2563EB] active:scale-95 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-[18px]">photo_camera</span>
+                  다시 촬영 및 스캔하기
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setScanError(null);
+                      fileInputRef.current?.click();
+                    }}
+                    className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#60A5FA] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">photo_library</span>
+                    갤러리 사진 변경
+                  </button>
+                  <button
+                    onClick={() => {
+                      setScanError(null);
+                      onOpenManualEntry();
+                    }}
+                    className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
+                    직접 수치 입력
+                  </button>
+                </div>
               </div>
             </div>
           </div>

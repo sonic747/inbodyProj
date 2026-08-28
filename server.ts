@@ -16,43 +16,20 @@ async function startServer() {
 
   // API Route: Analyze InBody Image using Gemini Vision
   app.post('/api/analyze-inbody', async (req, res) => {
-    // Accurate default dataset based on Swing Gym 2025.09.01 InBody sheet
-    const fallbackData = {
-      weight: 79.0,
-      skeletalMuscleMass: 30.6,
-      bodyFatMass: 24.9,
-      bodyFatPercentage: 31.6,
-      bmi: 30.1,
-      bmr: 1538,
-      visceralFatLevel: 9,
-      totalBodyWater: 39.7,
-      fatFreeMass: 54.1,
-      protein: 10.9,
-      mineral: 3.52,
-      waistHipRatio: 0.93,
-      muscleControl: 0.0,
-      fatControl: -15.4,
-      inBodyScore: 70,
-      height: 162,
-      age: 50,
-      gender: 'male',
-      measuredDate: '2025.09.01',
-      title: '스윙짐 1차 기준 측정 (2025.9.1)',
-      summary: '체중 79.0kg(심한과체중), 골격근량 30.6kg(우수), 체지방량 24.9kg(31.6%, 비만), 복부지방률 0.93, 신체발달점수 70점입니다. 골격근량이 30.6kg으로 잘 발달되어 있어 체지방 -15.4kg 감량 플랜을 진행하기에 이상적입니다.',
-      dietTip: '일일 권장 섭취열량 1,600 kcal를 기준으로 고단백질, 복합 탄수화물, 풍부한 채소 위주의 식단을 권장합니다.',
-      workoutTip: '30분 기준 조깅(277kcal), 수영(277kcal), 웨이트 트레이닝(395kcal) 등 권장 운동을 주 3~4회 규칙적으로 실행하세요.',
-    };
-
     try {
       const { imageBase64 } = req.body;
       if (!imageBase64) {
-        return res.status(400).json({ error: 'imageBase64 is required' });
+        return res.status(400).json({ error: 'imageBase64 is required', isValidInBody: false });
       }
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
-        console.warn('GEMINI_API_KEY is not set. Returning template response.');
-        return res.json(fallbackData);
+        console.warn('GEMINI_API_KEY is not set.');
+        return res.status(400).json({
+          error: 'GEMINI_API_KEY missing',
+          isValidInBody: false,
+          message: '정확한 인바디 스캔을 위해 결과지 사진을 촬영하거나 업로드해주세요.',
+        });
       }
 
       const ai = new GoogleGenAI({
@@ -73,35 +50,43 @@ async function startServer() {
         cleanBase64 = match[2];
       }
 
-      const prompt = `You are a high-speed, high-precision OCR extraction model for InBody / 체성분 분석 결과지.
-Carefully read the exact printed numbers from this InBody result sheet.
+      const prompt = `You are a strict, high-precision OCR and document classification engine for InBody and body composition report sheets (체성분 분석 결과지 / 인바디 검사지).
 
-Look for and extract these specific fields:
-1. 체중 (Weight): printed number in kg e.g. 79.0
-2. 골격근량 (Skeletal Muscle Mass / SMM): printed number in kg e.g. 30.6
-3. 체지방량 (Body Fat Mass / BFM): printed number in kg e.g. 24.9
-4. 체수분 (Total Body Water / TBW): printed number in kg e.g. 39.7
-5. 제지방량 (Fat Free Mass / FFM): printed number in kg e.g. 54.1
-6. 단백질 (Protein): printed number in kg e.g. 10.9
-7. 무기질 (Mineral): printed number in kg e.g. 3.52
-8. BMI (Body Mass Index): printed number e.g. 30.1
-9. 체지방률 (Percent Body Fat / PBF): printed number in % e.g. 31.6
-10. 복부지방률 (Waist-Hip Ratio / WHR): printed number e.g. 0.93
-11. 기초대사량 (Basal Metabolic Rate / BMR): printed number in kcal e.g. 1538
-12. 내장지방 (Visceral Fat Level): printed number level 1~20 e.g. 9
-13. 신체발달점수 (Fitness Score / InBody Score): printed score e.g. 70
-14. 근육-지방조절 (Muscle-Fat Control):
-    - 근육조절 (Muscle Control): e.g. 0.0
-    - 지방조절 (Fat Control): e.g. -15.4
-15. Header info:
-    - 날짜 (Date): e.g. "2025.09.01" or "2025.9.1"
-    - 신장 (Height): e.g. 162
-    - 연령 (Age): e.g. 50
-    - 성별 (Gender): "male" or "female"
-    - 지점명: e.g. "SWING GYM"
+First, evaluate whether the image is actually an InBody / Body Composition report sheet.
+If the image is NOT an InBody sheet (e.g. landscape, random object, animal, selfie, general text document, car, food, screen screenshot of other apps, blurred unrecognizable photo), set "isValidInBody": false and stop.
 
-Return ONLY a JSON object with this exact structure:
+If and only if it IS an InBody / 체성분 분석 결과지:
+1. Set "isValidInBody": true
+2. Extract the exact printed numbers from the sheet:
+   - "weight": number (체중 in kg e.g. 79.0)
+   - "skeletalMuscleMass": number (골격근량 in kg e.g. 30.6)
+   - "bodyFatMass": number (체지방량 in kg e.g. 24.9)
+   - "bodyFatPercentage": number (체지방률 in % e.g. 31.6)
+   - "bmi": number (BMI e.g. 30.1)
+   - "bmr": number (기초대사량 in kcal e.g. 1538)
+   - "visceralFatLevel": number (내장지방 레벨 1~20 e.g. 9)
+   - "totalBodyWater": number (체수분 in kg e.g. 39.7)
+   - "fatFreeMass": number (제지방량 in kg e.g. 54.1)
+   - "protein": number (단백질 in kg e.g. 10.9)
+   - "mineral": number (무기질 in kg e.g. 3.52)
+   - "waistHipRatio": number (복부지방률 e.g. 0.93)
+   - "muscleControl": number (근육조절 in kg e.g. 0.0)
+   - "fatControl": number (지방조절 in kg e.g. -15.4)
+   - "inBodyScore": number (신체발달점수 / InBody Score e.g. 70)
+   - "height": number (신장 in cm e.g. 162)
+   - "age": number (연령 e.g. 50)
+   - "gender": string ("male" | "female")
+   - "measuredDate": string (측정일자 e.g. "2025.09.01")
+   - "centerName": string (e.g. "SWING GYM")
+   - "title": string (e.g. "스윙짐 인바디 정밀 측정")
+   - "summary": string (Korean assessment of the exact body composition)
+   - "dietTip": string (Korean nutrition tip)
+   - "workoutTip": string (Korean exercise tip)
+
+Return ONLY a valid JSON object matching this schema:
 {
+  "isValidInBody": boolean,
+  "invalidReason": string (Korean reason if invalid, e.g. "인바디 결과지 형태가 인식되지 않았습니다. 인바디 검사 결과지 전체가 선명하게 나오도록 다시 촬영해주세요."),
   "weight": number,
   "skeletalMuscleMass": number,
   "bodyFatMass": number,
@@ -128,7 +113,7 @@ Return ONLY a JSON object with this exact structure:
   "workoutTip": string
 }`;
 
-      // Accurate OCR using gemini-2.5-flash with ample 20s timeout
+      // Accurate OCR using gemini-2.5-flash with 20s timeout
       const generatePromise = ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: [
@@ -157,27 +142,47 @@ Return ONLY a JSON object with this exact structure:
       const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedData = JSON.parse(cleanJson);
 
-      // Sanitize all extracted numbers
-      const sanitized: any = {};
-      for (const [k, v] of Object.entries(parsedData)) {
-        if (typeof v === 'number') {
-          sanitized[k] = isNaN(v) ? (fallbackData as any)[k] : v;
-        } else if (typeof v === 'string') {
-          sanitized[k] = v.trim();
-        }
-      }
-
-      if (typeof sanitized.weight === 'number' && sanitized.weight > 0) {
+      if (parsedData.isValidInBody === false) {
         return res.json({
-          ...fallbackData,
-          ...sanitized,
+          isValidInBody: false,
+          error: parsedData.invalidReason || '인바디 결과지 양식이 아닙니다. 정확한 인바디 결과지를 스캔해주세요.',
         });
       }
 
-      return res.json(fallbackData);
+      // Sanitize extracted numbers
+      const sanitized: any = { isValidInBody: true };
+      for (const [k, v] of Object.entries(parsedData)) {
+        if (typeof v === 'number') {
+          sanitized[k] = isNaN(v) ? undefined : v;
+        } else if (typeof v === 'string') {
+          sanitized[k] = v.trim();
+        } else if (typeof v === 'boolean') {
+          sanitized[k] = v;
+        }
+      }
+
+      // Check if core metrics were found
+      if (
+        typeof sanitized.weight === 'number' &&
+        sanitized.weight > 20 &&
+        sanitized.weight < 250 &&
+        typeof sanitized.skeletalMuscleMass === 'number' &&
+        typeof sanitized.bodyFatPercentage === 'number'
+      ) {
+        return res.json(sanitized);
+      }
+
+      // If weight or muscle couldn't be extracted, reject as non-inbody sheet
+      return res.json({
+        isValidInBody: false,
+        error: '인바디 결과지의 주요 수치(체중, 골격근량, 체지방률)를 식별할 수 없습니다. 결과지 전체가 나오도록 다시 스캔해주세요.',
+      });
     } catch (err: any) {
       console.error('Error analyzing inbody with gemini:', err);
-      return res.json(fallbackData);
+      return res.status(500).json({
+        isValidInBody: false,
+        error: '인바디 분석 중 오류가 발생했습니다. 선명한 결과지 사진으로 다시 시도해주세요.',
+      });
     }
   });
 
