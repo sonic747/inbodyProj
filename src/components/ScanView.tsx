@@ -498,16 +498,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
           if (res.ok) {
             const parsed = await res.json();
-            if (parsed.isValidInBody === false) {
+            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
+              setScanProgress(100);
+              const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
-              setScanError(
-                parsed.error ||
-                  '인바디 결과지 양식이 인식되지 않았습니다. 결과지의 체중, 골격근량, 체지방률 표가 선명하게 나오도록 다시 촬영해주세요.'
-              );
+              setScannedResult(record);
               return;
             }
-
-            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
+            if (parsed && parsed.isValidInBody !== false) {
               setScanProgress(100);
               const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
@@ -516,27 +514,20 @@ export const ScanView: React.FC<ScanViewProps> = ({
             }
           }
 
-          // In case of non-200 or unexpected payload, gracefully convert into editable record
+          // Fallback: If any response has data or fallback
           const fallbackData = await res.json().catch(() => ({}));
-          if (fallbackData && fallbackData.weight) {
-            const record = createRecordFromParsed(fallbackData, imageToAnalyze);
-            setIsScanning(false);
-            setScannedResult(record);
-            return;
-          }
-
+          setScanProgress(100);
+          const record = createRecordFromParsed(fallbackData || {}, imageToAnalyze);
           setIsScanning(false);
-          setScanError(
-            '인바디 결과지의 텍스트를 판독하기 어렵습니다. 조명이 밝은 곳에서 결과지를 평평하게 두고 다시 촬영해주세요.'
-          );
+          setScannedResult(record);
           return;
         } catch (fetchErr) {
-          console.warn('OCR fetch error or timeout:', fetchErr);
+          console.warn('OCR fetch error or timeout, utilizing baseline parse:', fetchErr);
           if (progressTimer) clearInterval(progressTimer);
+          setScanProgress(100);
+          const fallbackRecord = createRecordFromParsed({}, imageToAnalyze);
           setIsScanning(false);
-          setScanError(
-            '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
-          );
+          setScannedResult(fallbackRecord);
           return;
         }
       }
