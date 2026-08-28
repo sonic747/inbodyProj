@@ -50,6 +50,47 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [showHelp, setShowHelp] = useState(false);
   const [isEditingMetrics, setIsEditingMetrics] = useState(false);
 
+  // Live OCR Debugging & Diagnostics State
+  interface DebugLogItem {
+    id: string;
+    time: string;
+    type: 'info' | 'warn' | 'error' | 'success';
+    title: string;
+    detail?: any;
+  }
+  const [debugLogs, setDebugLogs] = useState<DebugLogItem[]>(() => [
+    {
+      id: 'init-1',
+      time: new Date().toTimeString().slice(0, 8),
+      type: 'info',
+      title: 'OCR 디버그 로거 초기화 완료',
+      detail: {
+        platform: navigator.platform,
+        userAgent: navigator.userAgent,
+        screen: `${window.innerWidth}x${window.innerHeight} (dpr: ${window.devicePixelRatio || 1})`,
+        createImageBitmapSupported: typeof createImageBitmap !== 'undefined',
+      },
+    },
+  ]);
+  const [serverDebug, setServerDebug] = useState<any>(null);
+  const [showDebugDrawer, setShowDebugDrawer] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  const addDebugLog = useCallback(
+    (type: 'info' | 'warn' | 'error' | 'success', title: string, detail?: any) => {
+      const item: DebugLogItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        time: new Date().toTimeString().slice(0, 8),
+        type,
+        title,
+        detail,
+      };
+      setDebugLogs((prev) => [item, ...prev.slice(0, 49)]);
+      console.log(`[OCR Debug ${type.toUpperCase()}] ${item.time} - ${title}`, detail || '');
+    },
+    []
+  );
+
   // Safely stop video stream
   const stopCurrentStream = useCallback(() => {
     if (streamRef.current) {
@@ -189,6 +230,11 @@ export const ScanView: React.FC<ScanViewProps> = ({
   // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions with EXIF orientation correction
   const compressImageFile = async (file: File): Promise<{ base64: string; width: number; height: number }> => {
     const maxDimension = 2400;
+    addDebugLog('info', '이미지 압축 및 정규화 시작', {
+      fileName: file.name,
+      fileSizeKB: (file.size / 1024).toFixed(1) + ' KB',
+      fileType: file.type,
+    });
 
     // Method 1: Modern createImageBitmap with native EXIF orientation correction (iOS Safari, Android Chrome)
     if (typeof createImageBitmap !== 'undefined') {
@@ -220,9 +266,15 @@ export const ScanView: React.FC<ScanViewProps> = ({
           ctx.drawImage(bitmap, 0, 0, width, height);
           const compressed = canvas.toDataURL('image/jpeg', 0.92);
           if (typeof bitmap.close === 'function') bitmap.close();
+          addDebugLog('success', 'createImageBitmap(EXIF보정) 변환 완료', {
+            original: `${origWidth}x${origHeight}`,
+            resized: `${width}x${height}`,
+            payloadKB: (compressed.length / 1024).toFixed(1) + ' KB',
+          });
           return { base64: compressed, width: origWidth, height: origHeight };
         }
-      } catch (bitmapErr) {
+      } catch (bitmapErr: any) {
+        addDebugLog('warn', 'createImageBitmap 실패, Image Loader로 폴백', { error: String(bitmapErr?.message || bitmapErr) });
         console.warn('createImageBitmap with orientation failed, falling back to standard loader:', bitmapErr);
       }
     }
@@ -259,22 +311,34 @@ export const ScanView: React.FC<ScanViewProps> = ({
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
           const compressed = canvas.toDataURL('image/jpeg', 0.92);
+          addDebugLog('success', 'Standard Image Canvas 변환 완료', {
+            original: `${origWidth}x${origHeight}`,
+            resized: `${width}x${height}`,
+            payloadKB: (compressed.length / 1024).toFixed(1) + ' KB',
+          });
           resolve({ base64: compressed, width: origWidth, height: origHeight });
         } else {
           const reader = new FileReader();
-          reader.onload = (e) =>
+          reader.onload = (e) => {
+            const rawBase64 = (e.target?.result as string) || '';
+            addDebugLog('warn', 'Canvas Context 불가, FileReader 직접 로드', { lengthKB: (rawBase64.length / 1024).toFixed(1) });
             resolve({
-              base64: (e.target?.result as string) || '',
+              base64: rawBase64,
               width: origWidth,
               height: origHeight,
             });
-          reader.onerror = () => resolve({ base64: '', width: 0, height: 0 });
+          };
+          reader.onerror = () => {
+            addDebugLog('error', 'FileReader 에러 발생');
+            resolve({ base64: '', width: 0, height: 0 });
+          };
           reader.readAsDataURL(file);
         }
       };
 
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
+        addDebugLog('error', 'Image element 로드 실패, FileReader 시도');
         const reader = new FileReader();
         reader.onload = (e) =>
           resolve({ base64: (e.target?.result as string) || '', width: 0, height: 0 });
@@ -288,6 +352,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   // Safe Native Camera & Gallery Triggers that guarantee fresh photo capture
   const openNativeCamera = () => {
+    addDebugLog('info', '스마트폰 네이티브 카메라 트리거');
     setCameraInputKey(Date.now());
     if (cameraInputRef.current) {
       cameraInputRef.current.value = '';
@@ -298,6 +363,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   };
 
   const openGallery = () => {
+    addDebugLog('info', '스마트폰 갤러리 파일 선택기 트리거');
     setFileInputKey(Date.now());
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -356,12 +422,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    addDebugLog('info', '사용자가 사진을 선택/촬영함', { name: file.name, size: `${(file.size / 1024).toFixed(1)} KB` });
     setScanError(null);
     stopCurrentStream();
 
     try {
       const result = await compressImageFile(file);
       if (!result.base64) {
+        addDebugLog('error', '이미지 Base64 변환 결과 비어있음');
         setScanError('이미지 파일을 읽을 수 없습니다. 다시 촬영해주세요.');
         return;
       }
@@ -375,7 +443,9 @@ export const ScanView: React.FC<ScanViewProps> = ({
       });
       setIsCroppedView(false);
       setShowSamplePicker(false);
+      addDebugLog('success', '미리보기 화면 진입 (전체 이미지 모드)', { width: result.width, height: result.height });
     } catch (err) {
+      addDebugLog('error', '이미지 처리 예외 발생', { err: String(err) });
       console.warn('Image processing error:', err);
       setScanError('이미지 처리 중 문제가 발생했습니다. 다른 사진으로 시도해주세요.');
     } finally {
@@ -464,9 +534,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
           setPreviewImage(croppedBase64);
           setIsCroppedView(true);
           setImageMeta({ width: cropCanvas.width, height: cropCanvas.height });
+          addDebugLog('success', '실시간 비디오 프레임 가이드 영역 캡처 성공', {
+            cropSize: `${cropCanvas.width}x${cropCanvas.height}`,
+            payloadKB: (croppedBase64.length / 1024).toFixed(1) + ' KB',
+          });
           return;
         }
       } catch (e) {
+        addDebugLog('warn', '실시간 프레임 크롭 실패, 네이티브 카메라 오픈', { error: String(e) });
         console.warn('Live frame crop error:', e);
       }
     }
@@ -480,6 +555,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
     const imageToAnalyze = customImageBase64 || previewImage;
 
     if (!imageToAnalyze && !presetData) {
+      addDebugLog('error', '분석할 이미지 없음');
       setScanError('분석할 인바디 결과지 이미지가 없습니다. 사진을 먼저 촬영해주세요.');
       return;
     }
@@ -490,6 +566,12 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setIsEditingMetrics(false);
     setScanProgress(15);
     setScanStatusText('🔍 AI가 인바디 결과지의 표와 수치를 분석하고 있습니다...');
+
+    addDebugLog('info', 'AI OCR 분석 요청 개시', {
+      hasPreset: !!presetData,
+      imageLengthKB: imageToAnalyze ? (imageToAnalyze.length / 1024).toFixed(1) + ' KB' : '0 KB',
+      isCroppedView,
+    });
 
     // Simulated animated progress phases to ensure clear feedback during the 8-12s analysis
     let progressTimer: NodeJS.Timeout | null = null;
@@ -517,15 +599,18 @@ export const ScanView: React.FC<ScanViewProps> = ({
           setScanProgress(100);
           setIsScanning(false);
           setScannedResult(record);
+          addDebugLog('success', '프리셋 인바디 데이터 적용 완료', { weight: record.weight, smm: record.skeletalMuscleMass });
         }, 600);
         return;
       }
 
       if (imageToAnalyze) {
         try {
+          const startTime = Date.now();
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 35000);
 
+          addDebugLog('info', 'POST /api/analyze-inbody 서버 요청 발송');
           const res = await fetch('/api/analyze-inbody', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -535,27 +620,60 @@ export const ScanView: React.FC<ScanViewProps> = ({
           clearTimeout(timeoutId);
           if (progressTimer) clearInterval(progressTimer);
 
-          const parsed = await res.json().catch(() => ({}));
+          const elapsed = Date.now() - startTime;
+          const parsed = await res.json().catch((jsonErr) => {
+            addDebugLog('error', '서버 응답 JSON 파싱 실패', { err: String(jsonErr) });
+            return {};
+          });
+
+          if (parsed._debug) {
+            setServerDebug(parsed._debug);
+          }
+
+          addDebugLog(
+            res.ok && parsed.isValidInBody !== false ? 'success' : 'warn',
+            `서버 응답 수신 (HTTP ${res.status}, ${elapsed}ms)`,
+            {
+              status: res.status,
+              isValidInBody: parsed.isValidInBody,
+              extractedWeight: parsed.weight,
+              extractedSmm: parsed.skeletalMuscleMass,
+              extractedPbf: parsed.bodyFatPercentage,
+              usedModel: parsed._debug?.successfulModel,
+              error: parsed.error,
+            }
+          );
 
           if (res.ok && parsed && parsed.isValidInBody !== false && typeof parsed.weight === 'number' && parsed.weight > 0) {
             setScanProgress(100);
             const record = createRecordFromParsed(parsed, imageToAnalyze);
             setIsScanning(false);
             setScannedResult(record);
+            addDebugLog('success', '인바디 수치 정상 인식 및 화면 렌더링 완료', {
+              recordSummary: `${record.measuredDate} | 체중: ${record.weight}kg | 골격근: ${record.skeletalMuscleMass}kg | 체지방: ${record.bodyFatPercentage}%`,
+            });
             return;
           }
 
           // If the AI flagged it as not a valid InBody sheet or OCR failed to read metrics:
           setIsScanning(false);
-          setScanError(
+          const errorMsg =
             parsed?.error ||
-              '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.'
-          );
+            '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.';
+          addDebugLog('error', '인바디 검증/인식 실패 (모달 노출)', {
+            errorMsg,
+            serverDebugData: parsed._debug,
+          });
+          setScanError(errorMsg);
           return;
         } catch (fetchErr: any) {
           console.warn('OCR fetch error or timeout:', fetchErr);
           if (progressTimer) clearInterval(progressTimer);
           setIsScanning(false);
+          addDebugLog('error', '네트워크 통신 오류 / 타임아웃 발생', {
+            name: fetchErr?.name,
+            message: fetchErr?.message,
+          });
           setScanError(
             '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
           );
@@ -566,9 +684,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
       if (progressTimer) clearInterval(progressTimer);
       setIsScanning(false);
       setScanError('인바디 결과지 이미지를 촬영하거나 업로드해주세요.');
-    } catch {
+    } catch (outerErr: any) {
       if (progressTimer) clearInterval(progressTimer);
       setIsScanning(false);
+      addDebugLog('error', '최상위 스캔 에러 발생', { err: String(outerErr) });
       setScanError('인바디 결과지 양식이 아닙니다. 정확한 인바디 결과지를 스캔해주세요.');
     }
   };
@@ -802,6 +921,19 @@ export const ScanView: React.FC<ScanViewProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {/* Live Debug Logs Button */}
+          <button
+            onClick={() => setShowDebugDrawer(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-[#1E222D] border border-[#3B82F6]/50 text-[#60A5FA] hover:bg-[#262B39] active:scale-95 transition-all shadow-md text-xs font-bold"
+            title="실시간 OCR 디버그 로그 및 기기 상태 확인"
+          >
+            <span className="material-symbols-outlined text-[16px] text-[#3B82F6]">terminal</span>
+            <span className="hidden sm:inline">디버그</span>
+            <span className="px-1.5 py-0.2 bg-[#3B82F6] text-white text-[10px] rounded-full font-mono">
+              {debugLogs.length}
+            </span>
+          </button>
+
           {!previewImage && !scannedResult && (
             <>
               {/* Flash Toggle */}
@@ -1192,8 +1324,37 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 </div>
               </div>
 
-              <div className="p-3.5 bg-[#161822] rounded-2xl border border-[#2A2D35] space-y-2 text-xs text-[#9CA3AF] leading-relaxed">
-                <p className="text-[#E2E4E9] font-medium">{scanError}</p>
+              <div className="p-3.5 bg-[#161822] rounded-2xl border border-[#2A2D35] space-y-2.5 text-xs text-[#9CA3AF] leading-relaxed">
+                <p className="text-[#EF4444] font-bold">{scanError}</p>
+
+                {/* Quick Diagnostic Preview */}
+                <div className="p-2.5 bg-[#0A0B0E] rounded-xl border border-[#EF4444]/30 space-y-1 font-mono text-[11px]">
+                  <div className="flex justify-between items-center text-[#E2E4E9]">
+                    <span className="text-[#9CA3AF]">진단 상태:</span>
+                    <span className="text-[#EF4444] font-bold">인식 실패 / 양식 불일치</span>
+                  </div>
+                  {serverDebug?.successfulModel && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[#9CA3AF]">응답 모델:</span>
+                      <span className="text-[#60A5FA]">{serverDebug.successfulModel}</span>
+                    </div>
+                  )}
+                  {serverDebug?.elapsedMs && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[#9CA3AF]">처리 시간:</span>
+                      <span className="text-[#9CA3AF]">{(serverDebug.elapsedMs / 1000).toFixed(2)}초</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowDebugDrawer(true)}
+                    className="w-full mt-2 py-1.5 px-2.5 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] border border-[#3B82F6]/40 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">bug_report</span>
+                    상세 디버그 로그 및 서버 판독 기록 보기 ({debugLogs.length}건)
+                  </button>
+                </div>
+
                 <ul className="list-disc list-inside text-[11px] space-y-1 text-[#9CA3AF] pt-1 border-t border-[#2A2D35]/60">
                   <li>인바디(InBody) 또는 체성분 검사 결과지 전체를 촬영해주세요.</li>
                   <li>체중, 골격근량, 체지방률 표가 선명하게 보이도록 조명을 맞춰주세요.</li>
@@ -1501,6 +1662,292 @@ export const ScanView: React.FC<ScanViewProps> = ({
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* Live OCR Debug Console Drawer & Device Inspector                          */}
+      {/* ========================================================================= */}
+      {showDebugDrawer && (
+        <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col justify-end md:justify-center p-0 md:p-6 animate-in fade-in duration-200">
+          <div className="bg-[#0E1017] border border-[#2A2D35] md:rounded-3xl rounded-t-3xl w-full max-w-xl mx-auto h-[88vh] md:h-[680px] flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-200">
+            {/* Drawer Header */}
+            <div className="px-4 py-3.5 bg-[#161822] border-b border-[#2A2D35] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-[#3B82F6]/20 border border-[#3B82F6]/40 flex items-center justify-center text-[#60A5FA]">
+                  <span className="material-symbols-outlined text-[18px]">terminal</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-[#E2E4E9] flex items-center gap-1.5">
+                    <span>스마트폰 OCR 실시간 진단기</span>
+                    <span className="text-[10px] bg-[#3B82F6]/20 text-[#60A5FA] px-1.5 py-0.5 rounded border border-[#3B82F6]/30">
+                      LIVE
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-[#9CA3AF]">
+                    기기 환경, 이미지 페이로드 및 AI 모델 판독 로그
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    const fullLogText = JSON.stringify(
+                      {
+                        deviceInfo: {
+                          userAgent: navigator.userAgent,
+                          platform: navigator.platform,
+                          screen: `${window.innerWidth}x${window.innerHeight} @${window.devicePixelRatio || 1}`,
+                          createImageBitmapSupported: typeof createImageBitmap !== 'undefined',
+                        },
+                        currentImage: {
+                          hasPreview: !!previewImage,
+                          meta: imageMeta,
+                          croppedMode: isCroppedView,
+                          payloadLengthKB: previewImage ? (previewImage.length / 1024).toFixed(1) : 0,
+                        },
+                        serverDebug,
+                        timelineLogs: debugLogs,
+                      },
+                      null,
+                      2
+                    );
+                    navigator.clipboard.writeText(fullLogText).then(() => {
+                      setCopySuccess(true);
+                      setTimeout(() => setCopySuccess(false), 2000);
+                    });
+                  }}
+                  className="px-2.5 py-1.5 bg-[#1E222D] hover:bg-[#262B39] text-[#E2E4E9] border border-[#2A2D35] text-xs font-semibold rounded-xl transition-all flex items-center gap-1 active:scale-95"
+                  title="전체 디버그 정보 복사"
+                >
+                  <span className="material-symbols-outlined text-[14px]">
+                    {copySuccess ? 'check' : 'content_copy'}
+                  </span>
+                  <span>{copySuccess ? '복사됨!' : '로그 복사'}</span>
+                </button>
+                <button
+                  onClick={() => setShowDebugDrawer(false)}
+                  className="w-8 h-8 rounded-full bg-[#1A1D26] hover:bg-[#222734] text-[#9CA3AF] hover:text-white flex items-center justify-center transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[18px]">close</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Drawer Body - Scrollable */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-xs">
+              {/* 1. Device & Browser Environment Card */}
+              <div className="bg-[#12141C] border border-[#2A2D35] rounded-2xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-[#60A5FA] font-sans font-bold text-xs pb-1 border-b border-[#2A2D35]">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[16px]">smartphone</span>
+                    기기 및 브라우저 환경
+                  </span>
+                  <span className="text-[10px] text-[#9CA3AF]">
+                    {/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? '스마트폰 / 모바일' : 'PC / 데스크톱'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
+                  <div>
+                    <span className="text-[#9CA3AF] block">화면 해상도:</span>
+                    <span className="text-[#E2E4E9] font-medium">
+                      {window.innerWidth} × {window.innerHeight} (dpr: {window.devicePixelRatio || 1})
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[#9CA3AF] block">EXIF 보정 지원:</span>
+                    <span className={typeof createImageBitmap !== 'undefined' ? 'text-[#10B981]' : 'text-[#F59E0B]'}>
+                      {typeof createImageBitmap !== 'undefined' ? '지원됨 (createImageBitmap)' : '미지원 (Fallback)'}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-[#9CA3AF] block">User Agent:</span>
+                    <span className="text-[#9CA3AF] text-[10px] break-all block bg-[#0A0B0E] p-1.5 rounded-lg border border-[#2A2D35]">
+                      {navigator.userAgent}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Current Image Payload Status */}
+              <div className="bg-[#12141C] border border-[#2A2D35] rounded-2xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between text-[#8B5CF6] font-sans font-bold text-xs pb-1 border-b border-[#2A2D35]">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[16px]">image</span>
+                    이미지 페이로드 진단
+                  </span>
+                  <span className="text-[10px] text-[#9CA3AF]">
+                    {previewImage ? '이미지 준비됨' : '이미지 없음'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
+                  <div>
+                    <span className="text-[#9CA3AF] block">이미지 크기:</span>
+                    <span className="text-[#E2E4E9]">
+                      {imageMeta.width && imageMeta.height ? `${imageMeta.width} × ${imageMeta.height} px` : '미측정'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[#9CA3AF] block">Base64 페이로드 용량:</span>
+                    <span className="text-[#E2E4E9]">
+                      {previewImage ? `${(previewImage.length / 1024).toFixed(1)} KB` : '0 KB'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[#9CA3AF] block">크롭 모드:</span>
+                    <span className="text-[#E2E4E9]">
+                      {isCroppedView ? '가이드 프레임 영역' : '전체 원본 사진'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[#9CA3AF] block">실시간 카메라 상태:</span>
+                    <span className={cameraActive ? 'text-[#10B981]' : 'text-[#9CA3AF]'}>
+                      {cameraActive ? '활성 (비디오 스트림)' : '비활성'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Server & AI OCR Diagnostics */}
+              {serverDebug && (
+                <div className="bg-[#12141C] border border-[#2A2D35] rounded-2xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between text-[#10B981] font-sans font-bold text-xs pb-1 border-b border-[#2A2D35]">
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[16px]">psychology</span>
+                      서버 AI OCR 판독 진단
+                    </span>
+                    <span className="text-[10px] text-[#60A5FA]">
+                      {serverDebug.successfulModel || '모델 실패'}
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 text-[11px] pt-1">
+                    <div className="flex justify-between">
+                      <span className="text-[#9CA3AF]">서버 소요 시간:</span>
+                      <span className="text-[#E2E4E9]">
+                        {serverDebug.elapsedMs ? `${(serverDebug.elapsedMs / 1000).toFixed(2)}초` : 'N/A'}
+                      </span>
+                    </div>
+                    {serverDebug.modelAttempts && (
+                      <div>
+                        <span className="text-[#9CA3AF] block mb-1">시도된 Gemini 모델 리스트:</span>
+                        <div className="space-y-1">
+                          {serverDebug.modelAttempts.map((attempt: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className={`p-1.5 rounded-lg border text-[10px] flex items-center justify-between ${
+                                attempt.success
+                                  ? 'bg-[#10B981]/10 border-[#10B981]/30 text-[#10B981]'
+                                  : 'bg-[#EF4444]/10 border-[#EF4444]/30 text-[#EF4444]'
+                              }`}
+                            >
+                              <span>{attempt.model}</span>
+                              <span>{attempt.success ? `성공 (${attempt.elapsedMs}ms)` : `실패: ${attempt.error}`}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {serverDebug.rawResponseText && (
+                      <div>
+                        <span className="text-[#9CA3AF] block mb-1">AI 모델 원본 텍스트 요약:</span>
+                        <pre className="bg-[#0A0B0E] p-2 rounded-lg border border-[#2A2D35] text-[10px] text-[#9CA3AF] overflow-x-auto whitespace-pre-wrap max-h-32">
+                          {serverDebug.rawResponseText}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Live Event Timeline Logs */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between font-sans font-bold text-xs text-[#E2E4E9]">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[16px] text-[#3B82F6]">history</span>
+                    실시간 이벤트 타임라인 ({debugLogs.length}건)
+                  </span>
+                  <button
+                    onClick={() =>
+                      setDebugLogs([
+                        {
+                          id: 'cleared-1',
+                          time: new Date().toTimeString().slice(0, 8),
+                          type: 'info',
+                          title: '로그가 초기화되었습니다.',
+                        },
+                      ])
+                    }
+                    className="text-[10px] text-[#9CA3AF] hover:text-[#E2E4E9] underline"
+                  >
+                    로그 비우기
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  {debugLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className={`p-2.5 rounded-xl border text-[11px] space-y-1 ${
+                        log.type === 'error'
+                          ? 'bg-[#EF4444]/10 border-[#EF4444]/40 text-[#FCA5A5]'
+                          : log.type === 'warn'
+                          ? 'bg-[#F59E0B]/10 border-[#F59E0B]/40 text-[#FCD34D]'
+                          : log.type === 'success'
+                          ? 'bg-[#10B981]/10 border-[#10B981]/40 text-[#6EE7B7]'
+                          : 'bg-[#12141C] border-[#2A2D35] text-[#E2E4E9]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold font-sans">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              log.type === 'error'
+                                ? 'bg-[#EF4444]'
+                                : log.type === 'warn'
+                                ? 'bg-[#F59E0B]'
+                                : log.type === 'success'
+                                ? 'bg-[#10B981]'
+                                : 'bg-[#3B82F6]'
+                            }`}
+                          />
+                          <span>{log.title}</span>
+                        </div>
+                        <span className="text-[10px] text-[#9CA3AF] font-mono">{log.time}</span>
+                      </div>
+                      {log.detail && (
+                        <pre className="text-[10px] bg-[#0A0B0E]/70 p-1.5 rounded border border-[#2A2D35]/50 overflow-x-auto whitespace-pre-wrap text-[#9CA3AF]">
+                          {typeof log.detail === 'object'
+                            ? JSON.stringify(log.detail, null, 2)
+                            : String(log.detail)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Drawer Footer Actions */}
+            <div className="p-3 bg-[#161822] border-t border-[#2A2D35] flex items-center justify-between gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  setShowDebugDrawer(false);
+                  triggerScanAnalysis(undefined, samplePresets[0].data);
+                }}
+                className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] border border-[#3B82F6]/30 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1"
+              >
+                <span className="material-symbols-outlined text-[15px]">science</span>
+                테스트 샘플 즉시 주입
+              </button>
+              <button
+                onClick={() => setShowDebugDrawer(false)}
+                className="py-2 px-5 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md"
+              >
+                닫기
+              </button>
+            </div>
           </div>
         </div>
       )}

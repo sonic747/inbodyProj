@@ -17,52 +17,45 @@ async function startServer() {
 
   // API Route: Analyze InBody Image using Gemini Vision OCR
   app.post('/api/analyze-inbody', async (req, res) => {
-    // Helper to generate a reliable InBody baseline record if API is not set or network fails
-    const generateFallbackRecord = (note?: string) => ({
-      isValidInBody: true,
-      isFallback: true,
-      weight: 79.0,
-      skeletalMuscleMass: 30.6,
-      bodyFatMass: 24.9,
-      bodyFatPercentage: 31.6,
-      bmi: 30.1,
-      bmr: 1538,
-      visceralFatLevel: 9,
-      totalBodyWater: 39.7,
-      fatFreeMass: 54.1,
-      protein: 10.9,
-      mineral: 3.52,
-      waistHipRatio: 0.93,
-      muscleControl: 0.0,
-      fatControl: -15.4,
-      inBodyScore: 70,
-      height: 162,
-      age: 50,
-      gender: 'male',
-      measuredDate: new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
-      centerName: 'SWING GYM',
-      title: '스윙짐 인바디 정밀 측정',
-      summary: '체중 79.0kg, 골격근량 30.6kg, 체지방률 31.6%로 측정되었습니다. 골격근량이 양호하며 체지방 감량 관리가 권장됩니다.',
-      dietTip: '일일 권장 섭취열량 1,600 kcal를 기준으로 고단백질, 복합 탄수화물, 풍부한 채소 위주의 식단을 권장합니다.',
-      workoutTip: '근력 운동(스쿼트, 데드리프트, 머신 운동) 주 3회 및 유산소 30분을 권장합니다.',
-      note,
+    const startTime = Date.now();
+    const serverLogs: Array<{ step: string; timestamp: string; details?: any }> = [];
+    const addLog = (step: string, details?: any) => {
+      const entry = { step, timestamp: new Date().toISOString().slice(11, 23), details };
+      serverLogs.push(entry);
+      console.log(`[OCR Server] ${entry.timestamp} - ${step}`, details ? JSON.stringify(details).slice(0, 200) : '');
+    };
+
+    addLog('Request received', {
+      headers: {
+        'content-type': req.headers['content-type'],
+        'user-agent': req.headers['user-agent']?.slice(0, 100),
+      },
     });
 
     try {
       const { imageBase64 } = req.body;
       if (!imageBase64) {
-        return res.status(400).json({ error: '분석할 이미지 데이터가 전달되지 않았습니다.', isValidInBody: false });
-      }
-
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        console.error('GEMINI_API_KEY is missing in process.env');
-        return res.status(500).json({
+        addLog('Missing imageBase64 in request body');
+        return res.status(400).json({
+          error: '분석할 이미지 데이터가 전달되지 않았습니다.',
           isValidInBody: false,
-          error: 'AI API 키(GEMINI_API_KEY)가 설정되어 있지 않습니다. 설정 메뉴에서 API 키를 확인해주세요.',
+          _debug: { serverLogs, elapsedMs: Date.now() - startTime },
         });
       }
 
+      addLog('Image payload received', { payloadLength: imageBase64.length });
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        addLog('GEMINI_API_KEY is missing in process.env');
+        return res.status(500).json({
+          isValidInBody: false,
+          error: 'AI API 키(GEMINI_API_KEY)가 서버 환경변수에 설정되어 있지 않습니다.',
+          _debug: { serverLogs, elapsedMs: Date.now() - startTime, apiKeyConfigured: false },
+        });
+      }
+
+      addLog('Gemini client initialized');
       const ai = new GoogleGenAI({
         apiKey,
         httpOptions: {
@@ -86,6 +79,7 @@ async function startServer() {
         cleanBase64 = match[2];
       }
       cleanBase64 = cleanBase64.replace(/\s+/g, '');
+      addLog('Base64 cleaned', { mimeType, cleanLength: cleanBase64.length });
 
       const systemPrompt = `You are a world-class OCR and document intelligence AI specialized in Korean body composition analysis sheets (InBody / 체성분 분석 결과지 / 인바디 검사지 / InBody 770, 570, 370, 270, 230, InBody Dial, Accuniq, Tanita, SWING GYM printouts, smart scale app screenshots, fitness center reports).
 
@@ -163,10 +157,13 @@ Return ONLY valid JSON matching this schema:
 
       try {
         let responseText = '';
-        const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+        let successfulModel = '';
+        const modelsToTry = ['gemini-2.5-flash', 'gemini-3.7-flash', 'gemini-2.5-pro'];
+        const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
         let lastErr: any = null;
 
         for (const modelName of modelsToTry) {
+          addLog(`Attempting model ${modelName}`);
           try {
             const response: any = await ai.models.generateContent({
               model: modelName,
@@ -192,9 +189,19 @@ Return ONLY valid JSON matching this schema:
               },
             });
             responseText = response.text || '';
-            if (responseText) break;
+            if (responseText) {
+              successfulModel = modelName;
+              modelAttempts.push({ model: modelName, ok: true });
+              addLog(`Model ${modelName} succeeded`, { responseLength: responseText.length });
+              break;
+            } else {
+              modelAttempts.push({ model: modelName, ok: false, error: 'Empty text returned' });
+              addLog(`Model ${modelName} returned empty text`);
+            }
           } catch (mErr: any) {
-            console.warn(`Model ${modelName} failed:`, mErr?.message);
+            const errMsg = mErr?.message || String(mErr);
+            addLog(`Model ${modelName} failed`, { error: errMsg });
+            modelAttempts.push({ model: modelName, ok: false, error: errMsg });
             lastErr = mErr;
           }
         }
@@ -207,14 +214,16 @@ Return ONLY valid JSON matching this schema:
         let parsedData: any = {};
         try {
           parsedData = JSON.parse(cleanJson);
+          addLog('JSON parsed successfully', { keys: Object.keys(parsedData) });
         } catch {
-          console.warn('Failed to parse Gemini JSON output:', responseText);
-          // Try extracting json substring if wrapped in extra text
+          addLog('JSON.parse failed on cleanJson, trying regex substring match', { snippet: responseText.slice(0, 200) });
           const jsonMatch = responseText.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             try {
               parsedData = JSON.parse(jsonMatch[0]);
-            } catch {
+              addLog('Regex matched JSON parsed successfully');
+            } catch (err: any) {
+              addLog('Regex JSON parse also failed', { err: String(err) });
               parsedData = {};
             }
           }
@@ -222,11 +231,20 @@ Return ONLY valid JSON matching this schema:
 
         // Check if the AI explicitly determined this is NOT a valid InBody sheet
         if (parsedData.isValidInBody === false) {
+          addLog('AI determined isValidInBody=false', { reason: parsedData.error });
           return res.json({
             isValidInBody: false,
             error:
               parsedData.error ||
               '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.',
+            _debug: {
+              serverLogs,
+              successfulModel,
+              modelAttempts,
+              rawResponseText: responseText.slice(0, 1000),
+              parsedData,
+              elapsedMs: Date.now() - startTime,
+            },
           });
         }
 
@@ -261,11 +279,22 @@ Return ONLY valid JSON matching this schema:
           if (pMatch) pbf = parseFloat(pMatch[1]);
         }
 
+        addLog('Extracted core numbers', { weight, smm, bfm, pbf, height });
+
         // Rejection rule: If neither weight, smm, bfm, nor pbf was detected at all, this is likely an unrelated picture
         if (!weight && !smm && !bfm && !pbf) {
+          addLog('All core metrics undefined, rejecting as invalid InBody');
           return res.json({
             isValidInBody: false,
             error: '인바디 결과지의 체중 및 체성분 수치를 인식할 수 없습니다. 밝은 조명에서 표 전체가 나오도록 다시 촬영해주세요.',
+            _debug: {
+              serverLogs,
+              successfulModel,
+              modelAttempts,
+              rawResponseText: responseText.slice(0, 1000),
+              parsedData,
+              elapsedMs: Date.now() - startTime,
+            },
           });
         }
 
@@ -313,21 +342,43 @@ Return ONLY valid JSON matching this schema:
           summary: parsedData.summary || `체중 ${weight}kg, 골격근량 ${smmVal}kg, 체지방률 ${pbfVal}%로 측정되었습니다.`,
           dietTip: parsedData.dietTip || `기초대사량 ${bmrVal} kcal에 맞춘 영양 식단 관리를 권장합니다.`,
           workoutTip: parsedData.workoutTip || `골격근량 ${smmVal}kg 유지를 위한 근력 및 유산소 운동 루틴을 추천합니다.`,
+          _debug: {
+            serverLogs,
+            successfulModel,
+            modelAttempts,
+            rawResponseText: responseText.slice(0, 1000),
+            parsedData,
+            elapsedMs: Date.now() - startTime,
+          },
         };
 
+        addLog('Returning sanitized result successfully', { elapsedMs: Date.now() - startTime });
         return res.json(sanitized);
       } catch (geminiErr: any) {
+        addLog('Gemini OCR API error caught', { error: geminiErr?.message || String(geminiErr), stack: geminiErr?.stack });
         console.warn('Gemini OCR API error:', geminiErr);
         return res.status(500).json({
           isValidInBody: false,
           error: 'AI 인바디 분석 중 통신 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
+          _debug: {
+            serverLogs,
+            errorMsg: geminiErr?.message || String(geminiErr),
+            stack: geminiErr?.stack,
+            elapsedMs: Date.now() - startTime,
+          },
         });
       }
     } catch (err: any) {
+      addLog('Server top-level error caught', { error: err?.message || String(err) });
       console.error('Error analyzing inbody:', err);
       return res.status(500).json({
         isValidInBody: false,
         error: '서버 처리 중 오류가 발생했습니다. 다시 시도해주세요.',
+        _debug: {
+          serverLogs,
+          errorMsg: err?.message || String(err),
+          elapsedMs: Date.now() - startTime,
+        },
       });
     }
   });
