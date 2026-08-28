@@ -485,7 +485,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
       if (imageToAnalyze) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 28000);
+          const timeoutId = setTimeout(() => controller.abort(), 35000);
 
           const res = await fetch('/api/analyze-inbody', {
             method: 'POST',
@@ -498,14 +498,16 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
           if (res.ok) {
             const parsed = await res.json();
-            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
-              setScanProgress(100);
-              const record = createRecordFromParsed(parsed, imageToAnalyze);
+            if (parsed.isValidInBody === false) {
               setIsScanning(false);
-              setScannedResult(record);
+              setScanError(
+                parsed.error ||
+                  '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.'
+              );
               return;
             }
-            if (parsed && parsed.isValidInBody !== false) {
+
+            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
               setScanProgress(100);
               const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
@@ -514,20 +516,20 @@ export const ScanView: React.FC<ScanViewProps> = ({
             }
           }
 
-          // Fallback: If any response has data or fallback
-          const fallbackData = await res.json().catch(() => ({}));
-          setScanProgress(100);
-          const record = createRecordFromParsed(fallbackData || {}, imageToAnalyze);
+          const errJson = await res.json().catch(() => ({}));
           setIsScanning(false);
-          setScannedResult(record);
+          setScanError(
+            errJson.error ||
+              '인바디 결과지 양식이 인식되지 않았습니다. 체중/골격근량 표가 온전히 보이도록 다시 촬영해주세요.'
+          );
           return;
         } catch (fetchErr) {
-          console.warn('OCR fetch error or timeout, utilizing baseline parse:', fetchErr);
+          console.warn('OCR fetch error or timeout:', fetchErr);
           if (progressTimer) clearInterval(progressTimer);
-          setScanProgress(100);
-          const fallbackRecord = createRecordFromParsed({}, imageToAnalyze);
           setIsScanning(false);
-          setScannedResult(fallbackRecord);
+          setScanError(
+            '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
+          );
           return;
         }
       }
@@ -548,21 +550,23 @@ export const ScanView: React.FC<ScanViewProps> = ({
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
 
-    const weight = data.weight !== undefined && !isNaN(Number(data.weight)) ? Number(data.weight) : 79.0;
-    const smm = data.skeletalMuscleMass !== undefined && !isNaN(Number(data.skeletalMuscleMass)) ? Number(data.skeletalMuscleMass) : 30.6;
-    const bfm = data.bodyFatMass !== undefined && !isNaN(Number(data.bodyFatMass)) ? Number(data.bodyFatMass) : 24.9;
-    const pbf = data.bodyFatPercentage !== undefined && !isNaN(Number(data.bodyFatPercentage)) ? Number(data.bodyFatPercentage) : 31.6;
-    const bmi = data.bmi !== undefined && !isNaN(Number(data.bmi)) ? Number(data.bmi) : 30.1;
-    const bmr = data.bmr !== undefined && !isNaN(Number(data.bmr)) ? Number(data.bmr) : 1538;
-    const visceral = data.visceralFatLevel !== undefined && !isNaN(Number(data.visceralFatLevel)) ? Number(data.visceralFatLevel) : 9;
-    const tbw = data.totalBodyWater !== undefined && !isNaN(Number(data.totalBodyWater)) ? Number(data.totalBodyWater) : 39.7;
+    const weight = data.weight !== undefined && !isNaN(Number(data.weight)) ? Number(data.weight) : 70.0;
+    const pbf = data.bodyFatPercentage !== undefined && !isNaN(Number(data.bodyFatPercentage)) ? Number(data.bodyFatPercentage) : 25.0;
+    const bfm = data.bodyFatMass !== undefined && !isNaN(Number(data.bodyFatMass)) ? Number(data.bodyFatMass) : +(weight * (pbf / 100)).toFixed(1);
+    const smm = data.skeletalMuscleMass !== undefined && !isNaN(Number(data.skeletalMuscleMass)) ? Number(data.skeletalMuscleMass) : +(weight * 0.42).toFixed(1);
+    const height = data.height !== undefined && !isNaN(Number(data.height)) ? Number(data.height) : 170;
+    const heightM = height / 100;
+    const bmi = data.bmi !== undefined && !isNaN(Number(data.bmi)) ? Number(data.bmi) : +(weight / (heightM * heightM)).toFixed(1);
     const ffm = data.fatFreeMass !== undefined && !isNaN(Number(data.fatFreeMass)) ? Number(data.fatFreeMass) : +(weight - bfm).toFixed(1);
-    const protein = data.protein !== undefined && !isNaN(Number(data.protein)) ? Number(data.protein) : 10.9;
-    const mineral = data.mineral !== undefined && !isNaN(Number(data.mineral)) ? Number(data.mineral) : 3.52;
-    const whr = data.waistHipRatio !== undefined && !isNaN(Number(data.waistHipRatio)) ? Number(data.waistHipRatio) : 0.93;
+    const bmr = data.bmr !== undefined && !isNaN(Number(data.bmr)) ? Number(data.bmr) : Math.round(370 + 21.6 * ffm);
+    const visceral = data.visceralFatLevel !== undefined && !isNaN(Number(data.visceralFatLevel)) ? Number(data.visceralFatLevel) : (pbf > 30 ? 9 : pbf > 25 ? 7 : 5);
+    const tbw = data.totalBodyWater !== undefined && !isNaN(Number(data.totalBodyWater)) ? Number(data.totalBodyWater) : +(ffm * 0.73).toFixed(1);
+    const protein = data.protein !== undefined && !isNaN(Number(data.protein)) ? Number(data.protein) : +(ffm * 0.2).toFixed(1);
+    const mineral = data.mineral !== undefined && !isNaN(Number(data.mineral)) ? Number(data.mineral) : +(ffm * 0.065).toFixed(2);
+    const whr = data.waistHipRatio !== undefined && !isNaN(Number(data.waistHipRatio)) ? Number(data.waistHipRatio) : 0.88;
     const muscleCtrl = data.muscleControl !== undefined && !isNaN(Number(data.muscleControl)) ? Number(data.muscleControl) : 0.0;
-    const fatCtrl = data.fatControl !== undefined && !isNaN(Number(data.fatControl)) ? Number(data.fatControl) : -15.4;
-    const score = data.inBodyScore !== undefined && !isNaN(Number(data.inBodyScore)) ? Number(data.inBodyScore) : 70;
+    const fatCtrl = data.fatControl !== undefined && !isNaN(Number(data.fatControl)) ? Number(data.fatControl) : (pbf > 22 ? -+(bfm - weight * 0.18).toFixed(1) : 0.0);
+    const score = data.inBodyScore !== undefined && !isNaN(Number(data.inBodyScore)) ? Number(data.inBodyScore) : Math.min(95, Math.max(50, Math.round(80 - (pbf - 20) * 1.2 + (smm / weight - 0.4) * 40)));
 
     // Date normalization
     let dateStr = `${yyyy}-${mm}-${dd}`;

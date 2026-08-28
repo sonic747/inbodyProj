@@ -51,13 +51,16 @@ async function startServer() {
     try {
       const { imageBase64 } = req.body;
       if (!imageBase64) {
-        return res.status(400).json({ error: 'imageBase64 is required', isValidInBody: false });
+        return res.status(400).json({ error: '분석할 이미지 데이터가 전달되지 않았습니다.', isValidInBody: false });
       }
 
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
-        console.warn('GEMINI_API_KEY is not set. Returning baseline InBody analysis.');
-        return res.json(generateFallbackRecord('AI API 키 미설정으로 스마트 기준 데이터가 로드되었습니다.'));
+        console.error('GEMINI_API_KEY is missing in process.env');
+        return res.status(500).json({
+          isValidInBody: false,
+          error: 'AI API 키(GEMINI_API_KEY)가 설정되어 있지 않습니다. 설정 메뉴에서 API 키를 확인해주세요.',
+        });
       }
 
       const ai = new GoogleGenAI({
@@ -85,160 +88,122 @@ async function startServer() {
       // Remove any whitespace or newline from base64
       cleanBase64 = cleanBase64.replace(/\s+/g, '');
 
-      const prompt = `You are a high-precision OCR and document analysis engine specialized in Korean InBody and body composition reports (체성분 분석 결과지 / 인바디 검사지 / InBody 770, 570, 370, 270, 230, InBody Dial, Accuniq, Tanita, SWING GYM printouts, mobile InBody screenshots, smart scale reports).
+      const systemPrompt = `You are a high-precision OCR and document analysis engine specialized in body composition sheets (InBody / 체성분 분석 결과지 / 인바디 검사지 / InBody 770, 570, 370, 270, 230, InBody Dial, Accuniq, Tanita, SWING GYM printout, smart scale reports).
 
-Instructions:
-1. The user has provided an image captured with a smartphone camera or uploaded from a gallery. It may be a photo of an InBody paper report sheet, a table, or a scan.
-2. ALWAYS treat any image with body composition numbers (weight, muscle, body fat, BMI, BMR, date, etc.) as VALID.
-3. Extract every single visible metric accurately:
-   - Header info:
-     * 신장 (Height cm, e.g. 162)
-     * 연령 (Age, e.g. 52)
+CRITICAL RULES:
+1. INSPECT THE IMAGE CAREFULLY.
+   - If the image is NOT a body composition report (e.g. it is a person's selfie, landscape, food, animal, car, random object, plain background with no body metrics, or completely unreadable blur):
+     YOU MUST RETURN:
+     {
+       "isValidInBody": false,
+       "invalidReason": "인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 포함된 결과지를 선명하게 촬영하거나 선택해주세요."
+     }
+   - DO NOT hallucinate numbers for unrelated images.
+
+2. IF THE IMAGE IS A VALID INBODY / BODY COMPOSITION REPORT:
+   - Extract the EXACT, REAL numerical values visible in THIS SPECIFIC image.
+   - Look for:
+     * 체중 (Weight in kg)
+     * 골격근량 (Skeletal Muscle Mass / SMM in kg)
+     * 체지방량 (Body Fat Mass in kg)
+     * 체지방률 (Percent Body Fat / PBF in %)
+     * BMI (Body Mass Index)
+     * 기초대사량 (BMR in kcal)
+     * 내장지방레벨 (Visceral Fat Level, integer 1-20)
+     * 체수분 (Total Body Water / TBW in L or kg)
+     * 제지방량 (Fat Free Mass / FFM in kg)
+     * 단백질 (Protein in kg)
+     * 무기질 (Mineral in kg)
+     * 복부지방률 (Waist-Hip Ratio / WHR)
+     * 근육조절 (Muscle Control in kg, e.g. 0.0 or +2.1)
+     * 지방조절 (Fat Control in kg, e.g. -14.1)
+     * 신체발달점수 / 인바디점수 (InBody Score / Fitness Score, integer 0-100)
+     * 신장 (Height in cm)
+     * 연령 (Age)
      * 성별 (Gender: "male" or "female")
-     * 측정일자 (Date, e.g. "2026.06.23" or "2024.12.15")
-     * 검사기관/센터명 (Center name, e.g. "SWING GYM")
-     * ID / 회원번호 (e.g. 2)
-   - 체성분분석 (Body Composition Analysis):
-     * 체중 (Weight kg, e.g. 77.9)
-     * 골격근량 (Skeletal Muscle Mass kg, e.g. 30.8)
-     * 체지방량 (Body Fat Mass kg, e.g. 23.7)
-     * 체수분 (Total Body Water kg, e.g. 39.8)
-     * 제지방량 (Fat Free Mass kg, e.g. 54.2)
-     * 단백질 (Protein kg, e.g. 10.9)
-     * 무기질 (Mineral kg, e.g. 3.47)
-   - 비만진단 (Obesity Diagnosis):
-     * BMI (kg/m², e.g. 29.7)
-     * 체지방률 (Percent Body Fat %, e.g. 30.4)
-     * 복부지방률 (Waist-Hip Ratio, e.g. 0.89)
-     * 기초대사량 (BMR kcal, e.g. 1541)
-     * 내장지방레벨 (Visceral Fat Level, e.g. 8)
-   - 근육-지방조절 (Muscle-Fat Control):
-     * 근육조절 (Muscle Control kg, e.g. 0.0)
-     * 지방조절 (Fat Control kg, e.g. -14.1)
-     * 신체발달점수 (InBody Score / Fitness Score, e.g. 71)
+     * 검사일시 / 측정일자 (Measured Date, e.g. "2026.06.23" or "YYYY.MM.DD")
+     * 검사기관 / 센터명 (Center Name, e.g. "SWING GYM" or whatever printed)
+   - If any secondary field is unreadable on the sheet, calculate it mathematically from the primary extracted metrics:
+     * Fat Free Mass = Weight - Body Fat Mass
+     * BMI = Weight / ((Height/100)^2)
+     * BMR = 370 + (21.6 * Fat Free Mass)
+   - Write a professional clinical summary in Korean based on the ACTUAL extracted numbers.
 
-4. If any specific secondary field is missing or blurred in the photo, compute it mathematically:
-   * Fat Free Mass = Weight - Body Fat Mass
-   * Total Body Water ≈ Fat Free Mass * 0.73
-   * Protein ≈ Fat Free Mass * 0.20
-   * Mineral ≈ Fat Free Mass * 0.065
-   * BMI = Weight / ((Height/100)^2)
-   * BMR ≈ 370 + (21.6 * Fat Free Mass)
-
-5. Always output "isValidInBody": true.
-
-Return strictly valid JSON only:
+3. Return ONLY a valid JSON object matching this schema:
 {
   "isValidInBody": true,
-  "weight": 77.9,
-  "skeletalMuscleMass": 30.8,
-  "bodyFatMass": 23.7,
-  "bodyFatPercentage": 30.4,
-  "bmi": 29.7,
-  "bmr": 1541,
-  "visceralFatLevel": 8,
-  "totalBodyWater": 39.8,
-  "fatFreeMass": 54.2,
-  "protein": 10.9,
-  "mineral": 3.47,
-  "waistHipRatio": 0.89,
-  "muscleControl": 0.0,
-  "fatControl": -14.1,
-  "inBodyScore": 71,
-  "height": 162,
-  "age": 52,
-  "gender": "male",
-  "measuredDate": "2026.06.23",
-  "centerName": "SWING GYM",
-  "title": "스윙짐 인바디 정밀 측정",
-  "summary": "체중 77.9kg, 골격근량 30.8kg, 체지방률 30.4%로 측정되었습니다. 골격근량이 양호하며 표준 체지방 유지를 위한 유산소 관리가 권장됩니다.",
-  "dietTip": "기초대사량 1,541 kcal에 맞춘 균형 잡힌 단백질 위주 영양 식단을 권장합니다.",
-  "workoutTip": "골격근량 유지와 체지방 감량을 위해 주 3~4회 웨이트 및 유산소 운동 30분을 권장합니다."
+  "weight": <number>,
+  "skeletalMuscleMass": <number>,
+  "bodyFatMass": <number>,
+  "bodyFatPercentage": <number>,
+  "bmi": <number>,
+  "bmr": <number>,
+  "visceralFatLevel": <number>,
+  "totalBodyWater": <number>,
+  "fatFreeMass": <number>,
+  "protein": <number>,
+  "mineral": <number>,
+  "waistHipRatio": <number>,
+  "muscleControl": <number>,
+  "fatControl": <number>,
+  "inBodyScore": <number>,
+  "height": <number>,
+  "age": <number>,
+  "gender": <"male" | "female">,
+  "measuredDate": <string "YYYY.MM.DD">,
+  "centerName": <string>,
+  "title": <string>,
+  "summary": <string in Korean analyzing this person's actual numbers>,
+  "dietTip": <string in Korean customized for their actual BMR & body fat>,
+  "workoutTip": <string in Korean customized for their actual muscle & fat>
 }`;
 
       try {
-        let responseText = '';
-        try {
-          const response: any = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: cleanBase64,
-                    },
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: cleanBase64,
                   },
-                  {
-                    text: prompt,
-                  },
-                ],
-              },
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
+                },
+                {
+                  text: systemPrompt,
+                },
+              ],
             },
-          });
-          responseText = response.text || '{}';
-        } catch (apiModelErr: any) {
-          console.warn('Gemini 2.5-flash call failed, trying backup call:', apiModelErr?.message);
-          const response: any = await ai.models.generateContent({
-            model: 'gemini-1.5-flash',
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType,
-                      data: cleanBase64,
-                    },
-                  },
-                  {
-                    text: prompt,
-                  },
-                ],
-              },
-            ],
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-            },
-          });
-          responseText = response.text || '{}';
-        }
+          ],
+          config: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        });
 
+        const responseText = response.text || '{}';
         const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         let parsedData: any = {};
         try {
           parsedData = JSON.parse(cleanJson);
         } catch {
-          // If JSON parse failed, extract key numbers with regex
-          const extractMatch = (regex: RegExp) => {
-            const m = responseText.match(regex);
-            return m ? parseFloat(m[1]) : undefined;
-          };
-          parsedData = {
-            weight: extractMatch(/체중[^\d]*([\d.]+)/i) || extractMatch(/weight[^\d]*([\d.]+)/i) || 77.9,
-            skeletalMuscleMass: extractMatch(/골격근량[^\d]*([\d.]+)/i) || extractMatch(/smm[^\d]*([\d.]+)/i) || 30.8,
-            bodyFatPercentage: extractMatch(/체지방률[^\d]*([\d.]+)/i) || extractMatch(/pbf[^\d]*([\d.]+)/i) || 30.4,
-            bodyFatMass: extractMatch(/체지방량[^\d]*([\d.]+)/i) || 23.7,
-            bmi: extractMatch(/bmi[^\d]*([\d.]+)/i) || 29.7,
-            bmr: extractMatch(/기초대사량[^\d]*([\d.]+)/i) || 1541,
-          };
-        }
-
-        if (parsedData.isValidInBody === false && parsedData.invalidReason) {
-          return res.json({
+          console.warn('Failed to parse Gemini JSON output:', responseText);
+          return res.status(422).json({
             isValidInBody: false,
-            error: parsedData.invalidReason,
+            error: '인바디 결과지 텍스트를 판독할 수 없습니다. 글자가 선명하게 보이도록 다시 촬영해주세요.',
           });
         }
 
-        // Helper to parse numbers safely from strings like "79.0 kg", "1,538", "30.6kg", etc.
+        if (parsedData.isValidInBody === false) {
+          return res.json({
+            isValidInBody: false,
+            error: parsedData.invalidReason || '인바디 결과지 양식이 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 포함된 결과지를 촬영해주세요.',
+          });
+        }
+
+        // Helper to parse numbers safely
         const parseNum = (val: any) => {
           if (typeof val === 'number') return isNaN(val) ? undefined : val;
           if (typeof val === 'string') {
@@ -249,24 +214,32 @@ Return strictly valid JSON only:
           return undefined;
         };
 
-        const weight = parseNum(parsedData.weight) || 79.0;
+        const weight = parseNum(parsedData.weight);
         const smm = parseNum(parsedData.skeletalMuscleMass);
         const bfm = parseNum(parsedData.bodyFatMass);
         const pbf = parseNum(parsedData.bodyFatPercentage);
 
-        const height = parseNum(parsedData.height) || 162;
+        // If weight or key metrics are completely missing, it's not a valid InBody
+        if (!weight || weight < 15 || weight > 300) {
+          return res.json({
+            isValidInBody: false,
+            error: '인바디 결과지의 체중 및 체성분 수치를 인식할 수 없습니다. 밝은 조명에서 표 전체가 나오도록 다시 촬영해주세요.',
+          });
+        }
+
+        const height = parseNum(parsedData.height) || 170;
         const heightM = height / 100;
         const bmi = parseNum(parsedData.bmi) || +(weight / (heightM * heightM)).toFixed(1);
-        const bodyFatMassVal = bfm !== undefined ? bfm : (pbf ? +(weight * (pbf / 100)).toFixed(1) : +(weight * 0.28).toFixed(1));
-        const pbfVal = pbf !== undefined ? pbf : (bodyFatMassVal ? +((bodyFatMassVal / weight) * 100).toFixed(1) : 28.0);
+        const bodyFatMassVal = bfm !== undefined ? bfm : (pbf ? +(weight * (pbf / 100)).toFixed(1) : +(weight * 0.25).toFixed(1));
+        const pbfVal = pbf !== undefined ? pbf : (bodyFatMassVal ? +((bodyFatMassVal / weight) * 100).toFixed(1) : 25.0);
         const smmVal = smm !== undefined ? smm : +(weight * 0.4).toFixed(1);
         const ffmVal = parseNum(parsedData.fatFreeMass) || +(weight - bodyFatMassVal).toFixed(1);
         const tbwVal = parseNum(parsedData.totalBodyWater) || +(ffmVal * 0.73).toFixed(1);
         const proteinVal = parseNum(parsedData.protein) || +(ffmVal * 0.2).toFixed(1);
-        const mineralVal = parseNum(parsedData.mineral) || +(ffmVal * 0.07).toFixed(2);
+        const mineralVal = parseNum(parsedData.mineral) || +(ffmVal * 0.065).toFixed(2);
         const bmrVal = parseNum(parsedData.bmr) || Math.round(370 + 21.6 * ffmVal);
         const visceralVal = parseNum(parsedData.visceralFatLevel) || (pbfVal > 30 ? 9 : pbfVal > 25 ? 7 : 5);
-        const scoreVal = parseNum(parsedData.inBodyScore) || Math.min(95, Math.max(60, Math.round(80 - (pbfVal - 20) * 1.2 + (smmVal / weight - 0.4) * 50)));
+        const scoreVal = parseNum(parsedData.inBodyScore) || Math.min(95, Math.max(50, Math.round(80 - (pbfVal - 20) * 1.2 + (smmVal / weight - 0.4) * 40)));
 
         const sanitized = {
           isValidInBody: true,
@@ -281,29 +254,35 @@ Return strictly valid JSON only:
           fatFreeMass: ffmVal,
           protein: proteinVal,
           mineral: mineralVal,
-          waistHipRatio: parseNum(parsedData.waistHipRatio) || 0.90,
+          waistHipRatio: parseNum(parsedData.waistHipRatio) || 0.88,
           muscleControl: parseNum(parsedData.muscleControl) || 0.0,
-          fatControl: parseNum(parsedData.fatControl) || (pbfVal > 25 ? -+(bodyFatMassVal - weight * 0.18).toFixed(1) : 0.0),
+          fatControl: parseNum(parsedData.fatControl) || (pbfVal > 22 ? -+(bodyFatMassVal - weight * 0.18).toFixed(1) : 0.0),
           inBodyScore: scoreVal,
           height,
-          age: parseNum(parsedData.age) || 50,
+          age: parseNum(parsedData.age) || 35,
           gender: parsedData.gender === 'female' ? 'female' : 'male',
           measuredDate: parsedData.measuredDate || new Date().toISOString().slice(0, 10).replace(/-/g, '.'),
           centerName: parsedData.centerName || 'SWING GYM',
-          title: parsedData.title || '스윙짐 인바디 정밀 측정',
+          title: parsedData.title || `스윙짐 인바디 정밀 측정 (${parsedData.measuredDate || new Date().toISOString().slice(0, 10).replace(/-/g, '.')})`,
           summary: parsedData.summary || `체중 ${weight}kg, 골격근량 ${smmVal}kg, 체지방률 ${pbfVal}%로 측정되었습니다.`,
           dietTip: parsedData.dietTip || `기초대사량 ${bmrVal} kcal에 맞춘 균형 잡힌 영양 식단을 권장합니다.`,
-          workoutTip: parsedData.workoutTip || `골격근량 유지를 위해 주 3~4회 유산소 및 근력 운동을 권장합니다.`,
+          workoutTip: parsedData.workoutTip || `골격근량 유지와 체지방 관리를 위해 주 3~4회 운동을 권장합니다.`,
         };
 
         return res.json(sanitized);
       } catch (geminiErr: any) {
-        console.warn('Gemini OCR API error or timeout, utilizing intelligent fallback:', geminiErr?.message);
-        return res.json(generateFallbackRecord('OCR 네트워크 지연으로 스마트 보정 데이터가 로드되었습니다.'));
+        console.error('Gemini OCR API error:', geminiErr);
+        return res.status(500).json({
+          isValidInBody: false,
+          error: 'AI 인바디 분석 중 오류가 발생했습니다. (' + (geminiErr?.message || '네트워크 오류') + ')',
+        });
       }
     } catch (err: any) {
       console.error('Error analyzing inbody:', err);
-      return res.json(generateFallbackRecord('결과지를 분석하여 기본 수치로 변환하였습니다.'));
+      return res.status(500).json({
+        isValidInBody: false,
+        error: '서버 처리 중 오류가 발생했습니다. 다시 시도해주세요.',
+      });
     }
   });
 
