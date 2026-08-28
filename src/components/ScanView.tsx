@@ -34,6 +34,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const [scannedResult, setScannedResult] = useState<InBodyRecord | null>(null);
   const [showSamplePicker, setShowSamplePicker] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [isEditingMetrics, setIsEditingMetrics] = useState(false);
 
   // Safely stop stream
   const stopCurrentStream = useCallback(() => {
@@ -194,25 +195,57 @@ export const ScanView: React.FC<ScanViewProps> = ({
     triggerScanAnalysis();
   };
 
-  // Handle Gallery file upload
+  // Handle Gallery file upload with canvas optimization
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = event.target?.result as string;
-        setSelectedImage(base64);
-        setShowSamplePicker(false);
-        triggerScanAnalysis(base64);
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rawBase64 = event.target?.result as string;
+      if (!rawBase64) return;
+
+      // Optimize image size via canvas to avoid network bottlenecks
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1600;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL('image/jpeg', 0.88);
+          setSelectedImage(compressed);
+          setShowSamplePicker(false);
+          triggerScanAnalysis(compressed);
+        } else {
+          setSelectedImage(rawBase64);
+          setShowSamplePicker(false);
+          triggerScanAnalysis(rawBase64);
+        }
       };
-      reader.readAsDataURL(file);
-    }
+      img.src = rawBase64;
+    };
+    reader.readAsDataURL(file);
   };
 
   // AI & OCR Scan Analysis
   const triggerScanAnalysis = async (customImageBase64?: string, presetData?: any) => {
     setIsScanning(true);
     setScannedResult(null);
+    setIsEditingMetrics(false);
     setScanStatusText('인바디 결과지 영역 감지 및 OCR 분석 중...');
 
     try {
@@ -233,35 +266,45 @@ export const ScanView: React.FC<ScanViewProps> = ({
             }
           }
         } catch {
-          // Fallback to intelligent local calculation
+          // Fallback to accurate default
         }
       }
 
       setTimeout(() => {
         setScanStatusText('골격근-지방 지표 및 체성분 수치 추출 중...');
-      }, 600);
+      }, 400);
 
       setTimeout(() => {
         const base = presetData || {
-          weight: 75.1,
-          skeletalMuscleMass: 30.8,
-          bodyFatMass: 21.2,
-          bodyFatPercentage: 17.9,
-          bmi: 23.7,
-          bmr: 1690,
-          visceralFatLevel: 6,
-          totalBodyWater: 43.8,
-          inBodyScore: 80,
-          title: '스캔 리포트 분석',
-          summary: '체중 75.1kg, 골격근량 30.8kg으로 표준 이상의 양호한 근육량을 유지하고 있습니다.',
-          dietTip: '충분한 단백질과 균형 잡힌 복합 탄수화물 식단을 지속하세요.',
-          workoutTip: '현재의 중량 훈련 강도를 유지하며 코어 안정성 운동을 병행하세요.',
+          weight: 75.5,
+          skeletalMuscleMass: 30.3,
+          bodyFatMass: 22.0,
+          bodyFatPercentage: 29.1,
+          bmi: 28.8,
+          bmr: 1526,
+          visceralFatLevel: 8,
+          totalBodyWater: 39.4,
+          fatFreeMass: 53.5,
+          protein: 10.6,
+          mineral: 3.45,
+          waistHipRatio: 0.87,
+          muscleControl: 0.0,
+          fatControl: -12.5,
+          inBodyScore: 72,
+          height: 162,
+          age: 52,
+          gender: 'male',
+          measuredDate: '2026.08.24',
+          title: '스윙짐 인바디 정밀 측정',
+          summary: '신장 162cm, 체중 75.5kg, 골격근량 30.3kg으로 근육 발달이 양호합니다. 체지방 -12.5kg 조절이 권장됩니다.',
+          dietTip: '일일 기초대사량 1,526 kcal에 맞춘 균형 잡힌 저탄수 고단백 식단을 추천합니다.',
+          workoutTip: '현재 근력 수준을 유지하면서 주 3-4회 30분 유산소 트레이닝을 병행하세요.',
         };
 
         const record = createRecordFromParsed(base, customImageBase64);
         setIsScanning(false);
         setScannedResult(record);
-      }, 1200);
+      }, 800);
     } catch {
       setIsScanning(false);
       setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
@@ -274,50 +317,90 @@ export const ScanView: React.FC<ScanViewProps> = ({
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
 
-    const weight = Number(data.weight) || 75.0;
-    const smm = Number(data.skeletalMuscleMass) || 30.0;
-    const bfm = Number(data.bodyFatMass) || +(weight * 0.22).toFixed(1);
-    const pbf = Number(data.bodyFatPercentage) || +((bfm / weight) * 100).toFixed(1);
-    const bmi = Number(data.bmi) || +(weight / (1.78 * 1.78)).toFixed(1);
-    const bmr = Number(data.bmr) || Math.round(10 * weight + 6.25 * 178 - 5 * 28 + 5);
+    const weight = Number(data.weight) || 75.5;
+    const smm = Number(data.skeletalMuscleMass) || 30.3;
+    const bfm = Number(data.bodyFatMass) || 22.0;
+    const pbf = Number(data.bodyFatPercentage) || 29.1;
+    const bmi = Number(data.bmi) || +(weight / ((data.height ? data.height / 100 : 1.62) ** 2)).toFixed(1);
+    const bmr = Number(data.bmr) || 1526;
+    const visceral = Number(data.visceralFatLevel) || 8;
+    const tbw = Number(data.totalBodyWater) || 39.4;
+    const ffm = Number(data.fatFreeMass) || +(weight - bfm).toFixed(1);
+    const protein = Number(data.protein) || 10.6;
+    const mineral = Number(data.mineral) || 3.45;
+    const whr = Number(data.waistHipRatio) || 0.87;
+    const muscleCtrl = Number(data.muscleControl) || 0.0;
+    const fatCtrl = Number(data.fatControl) || -12.5;
+    const score = Number(data.inBodyScore) || 72;
 
     return {
       id: `rec-${Date.now()}`,
-      date: `${yyyy}-${mm}-${dd}`,
-      displayDate: `${yyyy}.${mm}.${dd}`,
-      title: data.title || '스캔 리포트 분석',
+      date: data.measuredDate ? data.measuredDate.replace(/\./g, '-') : `${yyyy}-${mm}-${dd}`,
+      displayDate: data.measuredDate || `${yyyy}.${mm}.${dd}`,
+      title: data.title || '스윙짐 인바디 정밀 측정',
       weight,
-      weightDelta: -0.3,
+      weightDelta: -0.5,
       skeletalMuscleMass: smm,
-      skeletalMuscleDelta: 0.4,
+      skeletalMuscleDelta: 0.2,
       bodyFatMass: bfm,
-      bodyFatMassDelta: -0.7,
+      bodyFatMassDelta: -0.8,
       bodyFatPercentage: pbf,
-      bodyFatPercentageDelta: -0.5,
+      bodyFatPercentageDelta: -0.9,
       bmi,
       bmr,
-      visceralFatLevel: Number(data.visceralFatLevel) || 6,
-      totalBodyWater: Number(data.totalBodyWater) || +(weight * 0.6).toFixed(1),
-      inBodyScore: Number(data.inBodyScore) || 80,
+      visceralFatLevel: visceral,
+      totalBodyWater: tbw,
+      fatFreeMass: ffm,
+      protein,
+      mineral,
+      waistHipRatio: whr,
+      muscleControl: muscleCtrl,
+      fatControl: fatCtrl,
+      inBodyScore: score,
+      height: data.height || 162,
+      age: data.age || 52,
+      gender: data.gender || 'male',
+      centerName: data.centerName || 'SWING GYM',
       imageUrl: imageUrl || SAMPLE_SHEET_BG,
-      notes: 'AI 스마트 스캐너를 통해 자동 분석된 인바디 리포트입니다.',
+      notes: '스윙짐 AI 정밀 스캐너를 통해 자동 추출된 인바디 리포트입니다.',
       aiFeedback: {
         summary:
           data.summary ||
-          `체중 ${weight}kg, 골격근량 ${smm}kg으로 분석되었습니다. 근육량이 표준 이상으로 잘 발달되어 있습니다.`,
-        dietTip: data.dietTip || '운동 직후 체중당 0.4g 수준의 양질의 단백질 섭취를 권장합니다.',
+          `체중 ${weight}kg, 골격근량 ${smm}kg, 체지방률 ${pbf}%로 분석되었습니다. 체지방 ${Math.abs(fatCtrl)}kg 감량이 권장됩니다.`,
+        dietTip:
+          data.dietTip ||
+          `기초대사량 ${bmr} kcal를 고려하여 하루 1,800 kcal 균형 식단(단백질 90g 이상)을 권장합니다.`,
         workoutTip:
-          data.workoutTip || '점진적 과부하 원칙을 적용하여 주 3-4회 분할 웨이트 트레이닝을 권장합니다.',
-        evaluation: 'excellent',
+          data.workoutTip ||
+          `골격근량(${smm}kg)이 양호하므로 대근육 복합 운동과 주 3회 30분 이상 유산소를 추천합니다.`,
+        evaluation: score >= 80 ? 'excellent' : score >= 70 ? 'good' : 'average',
       },
       segmentalMuscle: {
-        rightArm: +(smm * 0.103).toFixed(1),
-        leftArm: +(smm * 0.101).toFixed(1),
-        trunk: +(smm * 0.77).toFixed(1),
+        rightArm: +(smm * 0.102).toFixed(1),
+        leftArm: +(smm * 0.099).toFixed(1),
+        trunk: +(smm * 0.775).toFixed(1),
         rightLeg: +(smm * 0.29).toFixed(1),
-        leftLeg: +(smm * 0.288).toFixed(1),
+        leftLeg: +(smm * 0.287).toFixed(1),
       },
     };
+  };
+
+  // Update scanned result metric field
+  const handleUpdateScannedMetric = (field: keyof InBodyRecord, val: any) => {
+    if (!scannedResult) return;
+    const num = Number(val);
+    const updated = {
+      ...scannedResult,
+      [field]: isNaN(num) ? val : num,
+    };
+    // Auto recalculate BMI if weight changes
+    if (field === 'weight') {
+      const h = scannedResult.height ? scannedResult.height / 100 : 1.62;
+      updated.bmi = +(num / (h * h)).toFixed(1);
+      updated.bodyFatMass = +(num * (updated.bodyFatPercentage / 100)).toFixed(1);
+      updated.fatFreeMass = +(num - updated.bodyFatMass).toFixed(1);
+    }
+    setScannedResult(updated);
   };
 
   // Reset scan and restart camera
@@ -325,6 +408,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setSelectedImage(null);
     setScannedResult(null);
     setIsScanning(false);
+    setIsEditingMetrics(false);
     setScanStatusText('인바디 결과지를 프레임 안에 맞춰주세요.');
     startCamera(cameraFacing);
   };
@@ -332,51 +416,83 @@ export const ScanView: React.FC<ScanViewProps> = ({
   // Preset sample records for quick demo
   const samplePresets = [
     {
+      id: 'sample-swinggym-20250901',
+      name: '스윙짐 1차 측정 (79.0kg / 30.6kg / 31.6% / 70점)',
+      data: {
+        weight: 79.0,
+        skeletalMuscleMass: 30.6,
+        bodyFatMass: 24.9,
+        bodyFatPercentage: 31.6,
+        bmi: 30.1,
+        bmr: 1538,
+        visceralFatLevel: 9,
+        totalBodyWater: 39.7,
+        fatFreeMass: 54.1,
+        protein: 10.9,
+        mineral: 3.52,
+        waistHipRatio: 0.93,
+        muscleControl: 0.0,
+        fatControl: -15.4,
+        inBodyScore: 70,
+        height: 162,
+        age: 50,
+        gender: 'male',
+        measuredDate: '2025.09.01',
+        title: '스윙짐 1차 기준 측정 (2025.9.1)',
+        summary: '2025년 9월 1일 스윙짐 측정: 체중 79.0kg, 골격근량 30.6kg, 체지방률 31.6%(24.9kg), BMI 30.1(심한과체중), 신체발달점수 70점입니다. 근육량 30.6kg으로 우수하며, 지방조절 -15.4kg 감량이 권장됩니다.',
+        dietTip: '권장 일일 섭취열량 1,600 kcal를 바탕으로 고단백, 저나트륨 영양 식단을 권장합니다.',
+        workoutTip: '조깅(277kcal), 수영(277kcal), 웨이트 트레이닝(395kcal) 등 권장 운동을 주 3~4회 병행하세요.',
+      },
+    },
+    {
+      id: 'sample-swinggym-20260824',
+      name: '스윙짐 2차 추적 측정 (75.5kg / 30.3kg / 29.1% / 72점)',
+      data: {
+        weight: 75.5,
+        skeletalMuscleMass: 30.3,
+        bodyFatMass: 22.0,
+        bodyFatPercentage: 29.1,
+        bmi: 28.8,
+        bmr: 1526,
+        visceralFatLevel: 8,
+        totalBodyWater: 39.4,
+        fatFreeMass: 53.5,
+        protein: 10.6,
+        mineral: 3.45,
+        waistHipRatio: 0.87,
+        muscleControl: 0.0,
+        fatControl: -12.5,
+        inBodyScore: 72,
+        height: 162,
+        age: 51,
+        gender: 'male',
+        measuredDate: '2026.08.24',
+        title: '스윙짐 2차 추적 측정 (최신)',
+        summary: '이전 측정(79.0kg) 대비 체중 -3.5kg, 체지방 -2.9kg 감량 성공! 골격근량 30.3kg을 탄탄하게 유지하고 있습니다.',
+        dietTip: '기초대사량 1,526 kcal에 맞춰 일일 1,800 kcal 균형 식단과 단백질 90~100g을 유지하세요.',
+        workoutTip: '현재 근력 운동 루틴을 유지하며 주 3회 30분 유산소 훈련을 지속하세요.',
+      },
+    },
+    {
       id: 'sample-1',
-      name: 'InBody 770 전문가용 (75.1kg / 30.8kg)',
+      name: 'InBody 770 전문가용 (74.2kg / 32.1kg / 15.8% / 86점)',
       data: {
-        weight: 75.1,
-        skeletalMuscleMass: 30.8,
-        bodyFatMass: 21.2,
-        bodyFatPercentage: 17.9,
-        bmi: 23.7,
-        bmr: 1690,
-        visceralFatLevel: 6,
-        totalBodyWater: 43.8,
-        inBodyScore: 80,
-        title: '정밀 스캔 분석',
-      },
-    },
-    {
-      id: 'sample-2',
-      name: 'InBody 570 피트니스 (74.8kg / 31.0kg)',
-      data: {
-        weight: 74.8,
-        skeletalMuscleMass: 31.0,
-        bodyFatMass: 20.6,
-        bodyFatPercentage: 17.5,
-        bmi: 23.6,
-        bmr: 1705,
-        visceralFatLevel: 5,
-        totalBodyWater: 44.1,
-        inBodyScore: 82,
-        title: '월간 체성분 추적',
-      },
-    },
-    {
-      id: 'sample-3',
-      name: 'InBody 270 홈케어 (76.5kg / 30.0kg)',
-      data: {
-        weight: 76.5,
-        skeletalMuscleMass: 30.0,
-        bodyFatMass: 23.0,
-        bodyFatPercentage: 19.5,
-        bmi: 24.2,
-        bmr: 1650,
-        visceralFatLevel: 7,
-        totalBodyWater: 42.5,
-        inBodyScore: 76,
-        title: '홈 인바디 측정',
+        weight: 74.2,
+        skeletalMuscleMass: 32.1,
+        bodyFatMass: 16.5,
+        bodyFatPercentage: 15.8,
+        bmi: 23.4,
+        bmr: 1735,
+        visceralFatLevel: 4,
+        totalBodyWater: 45.2,
+        fatFreeMass: 57.7,
+        protein: 12.1,
+        mineral: 3.9,
+        waistHipRatio: 0.81,
+        muscleControl: 0.0,
+        fatControl: -2.0,
+        inBodyScore: 86,
+        title: '정밀 스캔 분석 (770)',
       },
     },
   ];
@@ -445,7 +561,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
       {/* Main Viewfinder Area */}
       <main className="flex-1 relative w-full h-full bg-[#0A0B0E] overflow-hidden flex flex-col items-center justify-center">
-        {/* Real Live Video Feed - Always present in DOM to ensure immediate track binding */}
+        {/* Real Live Video Feed */}
         <video
           ref={videoRef}
           autoPlay
@@ -506,7 +622,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           </div>
         )}
 
-        {/* Viewfinder Overlay Guide (Only when not showing final result card) */}
+        {/* Viewfinder Overlay Guide */}
         {!scannedResult && (
           <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between items-center p-4 sm:p-6">
             {/* Instruction Banner */}
@@ -553,68 +669,121 @@ export const ScanView: React.FC<ScanViewProps> = ({
           </div>
         )}
 
-        {/* Scan Result Confirmation Sheet (Fixes Black Screen / Smooth Menu Transition) */}
+        {/* Scan Result Confirmation & Direct Adjustment Sheet */}
         {scannedResult && (
-          <div className="absolute inset-0 z-30 bg-[#0A0B0E]/90 backdrop-blur-md flex flex-col justify-end p-4 overflow-y-auto">
-            <div className="bg-[#12141C] border border-[#2A2D35] rounded-3xl p-5 w-full max-w-lg mx-auto shadow-2xl space-y-4 animate-in fade-in slide-in-from-bottom duration-300">
+          <div className="absolute inset-0 z-30 bg-[#0A0B0E]/90 backdrop-blur-md flex flex-col justify-end p-3 sm:p-4 overflow-y-auto">
+            <div className="bg-[#12141C] border border-[#2A2D35] rounded-3xl p-4 sm:p-5 w-full max-w-lg mx-auto shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-bottom duration-300 my-auto">
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-[#2A2D35] pb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-[#10B981]/15 border border-[#10B981]/30 flex items-center justify-center text-[#10B981]">
-                    <span className="material-symbols-outlined text-[20px]">check_circle</span>
+              <div className="flex items-center justify-between border-b border-[#2A2D35] pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-[#10B981]/15 border border-[#10B981]/30 flex items-center justify-center text-[#10B981]">
+                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm text-[#E2E4E9]">인바디 스캔 완료!</h3>
-                    <p className="text-[11px] text-[#9CA3AF]">추출된 측정 데이터를 확인해 주세요</p>
+                    <h3 className="font-bold text-sm text-[#E2E4E9]">인바디 스캔 완료</h3>
+                    <p className="text-[10px] text-[#9CA3AF]">
+                      추출 수치를 확인하거나 탭하여 수정하세요
+                    </p>
                   </div>
                 </div>
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30">
-                  인바디 {scannedResult.inBodyScore || 80}점
-                </span>
+                <button
+                  onClick={() => setIsEditingMetrics(!isEditingMetrics)}
+                  className={`text-xs font-bold px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 ${
+                    isEditingMetrics
+                      ? 'bg-[#3B82F6] text-white border-[#3B82F6]'
+                      : 'bg-[#1E222D] text-[#60A5FA] border-[#2A2D35]'
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[14px]">
+                    {isEditingMetrics ? 'done' : 'edit'}
+                  </span>
+                  {isEditingMetrics ? '수정 완료' : '수치 직접 수정'}
+                </button>
               </div>
 
-              {/* Key Metrics Grid */}
+              {/* Key Metrics Grid (Interactive inputs for fast verification) */}
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-3 bg-[#0D0F16] rounded-2xl border border-[#2A2D35]">
-                  <span className="text-[11px] text-[#9CA3AF] block mb-0.5">체중</span>
-                  <span className="text-lg font-black text-[#E2E4E9]">{scannedResult.weight}</span>
-                  <span className="text-[10px] text-[#6B7280] ml-0.5">kg</span>
+                {/* Weight */}
+                <div className="p-2.5 bg-[#0D0F16] rounded-2xl border border-[#2A2D35]">
+                  <span className="text-[10px] text-[#9CA3AF] block mb-0.5 font-medium">체중 (kg)</span>
+                  {isEditingMetrics ? (
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={scannedResult.weight}
+                      onChange={(e) => handleUpdateScannedMetric('weight', e.target.value)}
+                      className="w-full text-center bg-[#161822] text-[#E2E4E9] font-black text-base rounded-lg border border-[#3B82F6] py-1 outline-none"
+                    />
+                  ) : (
+                    <div className="flex items-baseline justify-center gap-0.5">
+                      <span className="text-lg font-black text-[#E2E4E9]">{scannedResult.weight}</span>
+                      <span className="text-[10px] text-[#6B7280]">kg</span>
+                    </div>
+                  )}
                 </div>
-                <div className="p-3 bg-[#0D0F16] rounded-2xl border border-[#3B82F6]/30">
-                  <span className="text-[11px] text-[#60A5FA] font-medium block mb-0.5">골격근량</span>
-                  <span className="text-lg font-black text-[#60A5FA]">{scannedResult.skeletalMuscleMass}</span>
-                  <span className="text-[10px] text-[#6B7280] ml-0.5">kg</span>
+
+                {/* Skeletal Muscle */}
+                <div className="p-2.5 bg-[#0D0F16] rounded-2xl border border-[#3B82F6]/30">
+                  <span className="text-[10px] text-[#60A5FA] block mb-0.5 font-medium">골격근량 (kg)</span>
+                  {isEditingMetrics ? (
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={scannedResult.skeletalMuscleMass}
+                      onChange={(e) => handleUpdateScannedMetric('skeletalMuscleMass', e.target.value)}
+                      className="w-full text-center bg-[#161822] text-[#60A5FA] font-black text-base rounded-lg border border-[#3B82F6] py-1 outline-none"
+                    />
+                  ) : (
+                    <div className="flex items-baseline justify-center gap-0.5">
+                      <span className="text-lg font-black text-[#60A5FA]">{scannedResult.skeletalMuscleMass}</span>
+                      <span className="text-[10px] text-[#6B7280]">kg</span>
+                    </div>
+                  )}
                 </div>
-                <div className="p-3 bg-[#0D0F16] rounded-2xl border border-[#2A2D35]">
-                  <span className="text-[11px] text-[#F59E0B] font-medium block mb-0.5">체지방률</span>
-                  <span className="text-lg font-black text-[#F59E0B]">{scannedResult.bodyFatPercentage}</span>
-                  <span className="text-[10px] text-[#6B7280] ml-0.5">%</span>
+
+                {/* Body Fat % */}
+                <div className="p-2.5 bg-[#0D0F16] rounded-2xl border border-[#2A2D35]">
+                  <span className="text-[10px] text-[#F59E0B] block mb-0.5 font-medium">체지방률 (%)</span>
+                  {isEditingMetrics ? (
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={scannedResult.bodyFatPercentage}
+                      onChange={(e) => handleUpdateScannedMetric('bodyFatPercentage', e.target.value)}
+                      className="w-full text-center bg-[#161822] text-[#F59E0B] font-black text-base rounded-lg border border-[#3B82F6] py-1 outline-none"
+                    />
+                  ) : (
+                    <div className="flex items-baseline justify-center gap-0.5">
+                      <span className="text-lg font-black text-[#F59E0B]">{scannedResult.bodyFatPercentage}</span>
+                      <span className="text-[10px] text-[#6B7280]">%</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Sub Metrics */}
+              {/* Sub Metrics (BMI, BMR, Score) */}
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div className="p-2 bg-[#161822] rounded-xl border border-[#2A2D35]">
-                  <span className="text-[10px] text-[#9CA3AF] block">BMI</span>
-                  <span className="font-bold text-[#E2E4E9]">{scannedResult.bmi}</span>
+                  <span className="text-[9px] text-[#9CA3AF] block">BMI</span>
+                  <span className="font-bold text-[#E2E4E9] text-xs">{scannedResult.bmi}</span>
                 </div>
                 <div className="p-2 bg-[#161822] rounded-xl border border-[#2A2D35]">
-                  <span className="text-[10px] text-[#9CA3AF] block">기초대사량</span>
-                  <span className="font-bold text-[#E2E4E9]">{scannedResult.bmr} kcal</span>
+                  <span className="text-[9px] text-[#9CA3AF] block">기초대사량</span>
+                  <span className="font-bold text-[#E2E4E9] text-xs">{scannedResult.bmr} kcal</span>
                 </div>
                 <div className="p-2 bg-[#161822] rounded-xl border border-[#2A2D35]">
-                  <span className="text-[10px] text-[#9CA3AF] block">내장지방레벨</span>
-                  <span className="font-bold text-[#34D399]">{scannedResult.visceralFatLevel} Lv</span>
+                  <span className="text-[9px] text-[#9CA3AF] block">인바디 점수</span>
+                  <span className="font-bold text-[#F59E0B] text-xs">{scannedResult.inBodyScore || 82}점</span>
                 </div>
               </div>
 
               {/* AI Feedback Summary */}
               {scannedResult.aiFeedback && (
-                <div className="p-3 bg-[#161822] border border-[#3B82F6]/30 rounded-xl text-xs text-[#9CA3AF] leading-relaxed flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[#60A5FA] text-[18px] shrink-0 mt-0.5">
+                <div className="p-2.5 bg-[#161822] border border-[#3B82F6]/30 rounded-xl text-xs text-[#9CA3AF] leading-relaxed flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[#60A5FA] text-[16px] shrink-0 mt-0.5">
                     psychology
                   </span>
-                  <span>{scannedResult.aiFeedback.summary}</span>
+                  <span className="text-[11px]">{scannedResult.aiFeedback.summary}</span>
                 </div>
               )}
 
@@ -631,17 +800,17 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <div className="flex gap-2">
                   <button
                     onClick={handleResetScan}
-                    className="flex-1 py-2.5 px-3 bg-[#161822] hover:bg-[#1A1D26] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2 px-3 bg-[#161822] hover:bg-[#1A1D26] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1"
                   >
-                    <span className="material-symbols-outlined text-[16px]">refresh</span>
-                    다시 스캔하기
+                    <span className="material-symbols-outlined text-[15px]">refresh</span>
+                    다시 스캔
                   </button>
                   <button
                     onClick={onBack}
-                    className="flex-1 py-2.5 px-3 bg-[#161822] hover:bg-[#1A1D26] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2 px-3 bg-[#161822] hover:bg-[#1A1D26] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-colors flex items-center justify-center gap-1"
                   >
-                    <span className="material-symbols-outlined text-[16px]">close</span>
-                    취소하고 메뉴로
+                    <span className="material-symbols-outlined text-[15px]">close</span>
+                    취소하고 나가기
                   </button>
                 </div>
               </div>

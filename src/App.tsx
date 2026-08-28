@@ -11,8 +11,8 @@ import { ScanDetailModal } from './components/ScanDetailModal';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import confetti from 'canvas-confetti';
 
-const STORAGE_KEY_RECORDS = 'inbody_app_records_v1';
-const STORAGE_KEY_PROFILE = 'inbody_app_profile_v1';
+const STORAGE_KEY_RECORDS = 'inbody_app_records_v3';
+const STORAGE_KEY_PROFILE = 'inbody_app_profile_v3';
 
 export default function App() {
   // Load stored records or initial records
@@ -158,7 +158,8 @@ export default function App() {
           <HistoryView
             records={records}
             onSelectRecord={(rec) => setSelectedRecord(rec)}
-            onImportData={handleImportRecords}
+            onDeleteRecord={handleDeleteRecord}
+            onClearAllRecords={() => setRecords([])}
             onOpenManualEntry={() => setShowManualEntry(true)}
           />
         )}

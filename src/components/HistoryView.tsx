@@ -4,18 +4,21 @@ import { InBodyRecord } from '../types';
 interface HistoryViewProps {
   records: InBodyRecord[];
   onSelectRecord: (record: InBodyRecord) => void;
-  onImportData: (importedRecords: InBodyRecord[]) => void;
+  onDeleteRecord?: (id: string) => void;
+  onClearAllRecords?: () => void;
   onOpenManualEntry: () => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
   records,
   onSelectRecord,
-  onImportData,
+  onDeleteRecord,
+  onClearAllRecords,
   onOpenManualEntry,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<InBodyRecord | null>(null);
+  const [showClearAllConfirm, setShowClearAllConfirm] = useState(false);
 
   // Filter records based on search query
   const filteredRecords = records.filter(
@@ -25,95 +28,52 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       r.notes?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Export records as JSON file
-  const handleExportJSON = () => {
-    const dataStr =
-      'data:text/json;charset=utf-8,' +
-      encodeURIComponent(JSON.stringify(records, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute(
-      'download',
-      `inbody-records-${new Date().toISOString().slice(0, 10)}.json`
-    );
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+  const confirmDeleteSingle = (record: InBodyRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecordToDelete(record);
   };
 
-  // Import JSON handler
-  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const executeDeleteSingle = () => {
+    if (recordToDelete && onDeleteRecord) {
+      onDeleteRecord(recordToDelete.id);
+      setRecordToDelete(null);
+    }
+  };
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        if (Array.isArray(json) && json.length > 0) {
-          onImportData(json);
-          setImportStatus(`${json.length}개의 기록을 성공적으로 불러왔습니다.`);
-          setTimeout(() => setImportStatus(null), 3000);
-        } else {
-          alert('올바른 인바디 JSON 데이터 형식이 아닙니다.');
-        }
-      } catch {
-        alert('JSON 파일을 읽는 중 오류가 발생했습니다.');
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+  const executeClearAll = () => {
+    if (onClearAllRecords) {
+      onClearAllRecords();
+      setShowClearAllConfirm(false);
+    }
   };
 
   return (
     <main className="flex-1 max-w-4xl mx-auto w-full flex flex-col gap-6 pb-24 md:pb-8">
-      {/* Header & Actions */}
+      {/* Header & Actions (Removed Import & Export) */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-[#E2E4E9]">
             스캔 기록 및 데이터 목록
           </h1>
           <p className="text-sm text-[#9CA3AF] mt-1">
-            이전 스캔 항목과 수치를 확인하세요.
+            저장된 인바디 측정 기록을 확인하고 관리하세요. ({records.length}개)
           </p>
         </div>
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          <label className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 border border-[#2A2D35] rounded-xl bg-[#12141C] hover:bg-[#1A1D26] hover:border-[#3E424B] cursor-pointer transition-colors duration-200 shadow-sm">
-            <span
-              className="material-symbols-outlined text-[#9CA3AF]"
-              style={{ fontSize: '18px' }}
+          {records.length > 0 && onClearAllRecords && (
+            <button
+              onClick={() => setShowClearAllConfirm(true)}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 border border-[#EF4444]/40 rounded-xl bg-[#12141C] hover:bg-[#EF4444]/15 text-[#F87171] transition-colors duration-200 shadow-sm text-xs font-semibold"
+              title="모든 인바디 기록 비우기"
             >
-              upload
-            </span>
-            <span className="text-xs font-semibold text-[#E2E4E9]">
-              데이터 불러오기
-            </span>
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleFileImport}
-              className="hidden"
-            />
-          </label>
-
-          <button
-            onClick={handleExportJSON}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 border border-[#2A2D35] rounded-xl bg-[#12141C] hover:bg-[#1A1D26] hover:border-[#3E424B] transition-colors duration-200 shadow-sm"
-          >
-            <span
-              className="material-symbols-outlined text-[#9CA3AF]"
-              style={{ fontSize: '18px' }}
-            >
-              download
-            </span>
-            <span className="text-xs font-semibold text-[#E2E4E9]">
-              JSON 내보내기
-            </span>
-          </button>
+              <span className="material-symbols-outlined text-[18px]">delete_sweep</span>
+              전체 기록 삭제
+            </button>
+          )}
 
           <button
             onClick={onOpenManualEntry}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-1 px-3.5 py-2 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] hover:from-[#2563EB] hover:to-[#7C3AED] text-white rounded-xl transition-all text-xs font-semibold shadow-lg shadow-blue-500/20"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] hover:from-[#2563EB] hover:to-[#7C3AED] text-white rounded-xl transition-all text-xs font-semibold shadow-lg shadow-blue-500/20 active:scale-95"
           >
             <span className="material-symbols-outlined text-[16px]">add</span>
             직접 기록
@@ -121,10 +81,58 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         </div>
       </div>
 
-      {importStatus && (
-        <div className="p-3 bg-[#10B981]/15 text-[#34D399] rounded-xl text-xs font-semibold border border-[#10B981]/30 flex items-center gap-2">
-          <span className="material-symbols-outlined text-[18px]">check_circle</span>
-          {importStatus}
+      {/* Clear All Confirmation Modal */}
+      {showClearAllConfirm && (
+        <div className="p-4 bg-[#EF4444]/15 border border-[#EF4444]/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 text-[#F87171] font-semibold">
+            <span className="material-symbols-outlined text-[20px]">warning</span>
+            <span>저장된 모든 인바디 기록({records.length}개)을 완전히 삭제하시겠습니까?</span>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              onClick={() => setShowClearAllConfirm(false)}
+              className="flex-1 sm:flex-none px-3 py-1.5 bg-[#1A1D26] text-[#9CA3AF] hover:text-[#E2E4E9] rounded-lg transition-colors"
+            >
+              취소
+            </button>
+            <button
+              onClick={executeClearAll}
+              className="flex-1 sm:flex-none px-3.5 py-1.5 bg-[#EF4444] hover:bg-[#DC2626] text-white font-bold rounded-lg shadow-md transition-all active:scale-95"
+            >
+              전체 삭제 확인
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Single Record Delete Confirmation Modal */}
+      {recordToDelete && (
+        <div className="p-4 bg-[#161822] border border-[#EF4444]/50 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs animate-in fade-in duration-200 shadow-xl">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#EF4444]/20 flex items-center justify-center text-[#F87171]">
+              <span className="material-symbols-outlined text-[18px]">delete</span>
+            </div>
+            <div>
+              <p className="font-bold text-[#E2E4E9]">
+                [{recordToDelete.displayDate}] {recordToDelete.title} ({recordToDelete.weight}kg)
+              </p>
+              <p className="text-[11px] text-[#F87171]">이 기록을 삭제하시겠습니까?</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <button
+              onClick={() => setRecordToDelete(null)}
+              className="flex-1 sm:flex-none px-3 py-1.5 bg-[#1A1D26] text-[#9CA3AF] hover:text-[#E2E4E9] rounded-lg transition-colors"
+            >
+              취소
+            </button>
+            <button
+              onClick={executeDeleteSingle}
+              className="flex-1 sm:flex-none px-3.5 py-1.5 bg-[#EF4444] hover:bg-[#DC2626] text-white font-bold rounded-lg shadow-md transition-all active:scale-95 flex items-center justify-center gap-1"
+            >
+              삭제
+            </button>
+          </div>
         </div>
       )}
 
@@ -137,7 +145,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-full pl-11 pr-4 py-3 bg-[#12141C] border border-[#2A2D35] rounded-xl focus:border-[#3B82F6] focus:ring-1 focus:ring-[#3B82F6] outline-none transition-all text-sm text-[#E2E4E9] placeholder-[#6B7280] shadow-sm"
-          placeholder="날짜로 검색 (예: 2026.08)"
+          placeholder="날짜나 제목으로 검색 (예: 2026.08)"
           type="text"
         />
         {searchQuery && (
@@ -157,7 +165,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             <span className="material-symbols-outlined text-4xl mb-2 text-[#6B7280]">
               history_toggle_off
             </span>
-            <p className="font-semibold text-sm text-[#E2E4E9]">검색된 기록이 없습니다</p>
+            <p className="font-semibold text-sm text-[#E2E4E9]">
+              {records.length === 0 ? '저장된 인바디 기록이 없습니다' : '검색된 기록이 없습니다'}
+            </p>
             <p className="text-xs text-[#6B7280] mt-1">
               새로운 인바디 결과지를 스캔하거나 직접 입력해 보세요.
             </p>
@@ -196,14 +206,28 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       {record.title}
                     </div>
                   </div>
-                  <button
-                    className="p-1.5 text-[#60A5FA] group-hover:bg-[#3B82F6]/15 rounded-xl transition-colors"
-                    title="상세 보기"
-                  >
-                    <span className="material-symbols-outlined text-[22px]">
-                      chevron_right
-                    </span>
-                  </button>
+
+                  {/* Actions: Delete Button & Chevron */}
+                  <div className="flex items-center gap-1">
+                    {onDeleteRecord && (
+                      <button
+                        onClick={(e) => confirmDeleteSingle(record, e)}
+                        className="p-2 text-[#9CA3AF] hover:text-[#F87171] hover:bg-[#EF4444]/15 rounded-xl transition-colors"
+                        title="기록 삭제"
+                        aria-label="기록 삭제"
+                      >
+                        <span className="material-symbols-outlined text-[20px]">delete</span>
+                      </button>
+                    )}
+                    <button
+                      className="p-1.5 text-[#60A5FA] group-hover:bg-[#3B82F6]/15 rounded-xl transition-colors"
+                      title="상세 보기"
+                    >
+                      <span className="material-symbols-outlined text-[22px]">
+                        chevron_right
+                      </span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Bottom Row (2 Columns) */}
