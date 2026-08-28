@@ -18,6 +18,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // Camera & Device State
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
@@ -62,7 +63,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setCameraLabel('카메라 연결 시도 중...');
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraError('현재 브라우저 환경에서 카메라 접근 API를 지원하지 않습니다.');
+      setCameraError('현재 브라우저 환경에서 실시간 비디오 스트림이 지원되지 않습니다.');
       setCameraLabel('카메라 미지원');
       return;
     }
@@ -101,10 +102,10 @@ export const ScanView: React.FC<ScanViewProps> = ({
             err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError';
           setCameraError(
             isPermissionDenied
-              ? '카메라 권한이 차단되었습니다. 브라우저 설정에서 카메라 권한을 허용해 주세요.'
-              : '카메라 장치를 시작할 수 없습니다. 아래 갤러리 버튼으로 사진을 업로드해 보세요.'
+              ? '카메라 권한이 차단되었습니다. 브라우저 설정에서 카메라를 허용하거나 아래 [카메라 촬영] 버튼을 눌러주세요.'
+              : '실시간 카메라 화면을 불러올 수 없습니다. 아래 [카메라 촬영] 또는 [갤러리] 버튼을 이용해주세요.'
           );
-          setCameraLabel('카메라 접근 불가');
+          setCameraLabel('카메라 접근 제한');
           return;
         }
       }
@@ -173,43 +174,57 @@ export const ScanView: React.FC<ScanViewProps> = ({
     setCameraFacing(next);
   };
 
-  // Capture current camera video frame
+  // Capture current camera video frame or launch native mobile camera
   const captureCameraFrame = () => {
-    if (videoRef.current && cameraActive) {
+    if (videoRef.current && cameraActive && videoRef.current.videoWidth > 100) {
       try {
         const video = videoRef.current;
         const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 1280;
-        canvas.height = video.videoHeight || 720;
+        canvas.width = video.videoWidth || 1920;
+        canvas.height = video.videoHeight || 1080;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const base64 = canvas.toDataURL('image/jpeg', 0.9);
+          const base64 = canvas.toDataURL('image/jpeg', 0.92);
           setSelectedImage(base64);
           triggerScanAnalysis(base64);
           return;
         }
       } catch (e) {
-        console.warn('Capture error:', e);
+        console.warn('Live capture canvas error:', e);
       }
     }
-    triggerScanAnalysis();
+
+    // If live video is not active/available, seamlessly trigger phone's native camera
+    if (cameraInputRef.current) {
+      cameraInputRef.current.click();
+    } else if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
-  // Handle Gallery file upload with high-speed canvas optimization
+  // Handle Smartphone Camera / Gallery file upload with high-precision canvas optimization
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setScanError(null);
+    setScanStatusText('⚡ 고화질 이미지 로딩 및 OCR 준비 중...');
+    setIsScanning(true);
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const rawBase64 = event.target?.result as string;
-      if (!rawBase64) return;
+      if (!rawBase64) {
+        setIsScanning(false);
+        setScanError('이미지 파일을 읽을 수 없습니다. 다시 선택해주세요.');
+        return;
+      }
 
-      // Fast image compression: max 1000px and 0.78 quality for instant upload & low latency
+      // Optimize for high-precision OCR: max 2048px and 0.88 quality
       const img = new Image();
       img.onload = () => {
-        const maxDim = 1000;
+        const maxDim = 2048;
         let w = img.width;
         let h = img.height;
         if (w > maxDim || h > maxDim) {
@@ -227,7 +242,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
-          const compressed = canvas.toDataURL('image/jpeg', 0.78);
+          const compressed = canvas.toDataURL('image/jpeg', 0.88);
           setSelectedImage(compressed);
           setShowSamplePicker(false);
           triggerScanAnalysis(compressed);
@@ -237,9 +252,22 @@ export const ScanView: React.FC<ScanViewProps> = ({
           triggerScanAnalysis(rawBase64);
         }
       };
+      img.onerror = () => {
+        // Fallback to direct raw base64
+        setSelectedImage(rawBase64);
+        setShowSamplePicker(false);
+        triggerScanAnalysis(rawBase64);
+      };
       img.src = rawBase64;
     };
+    reader.onerror = () => {
+      setIsScanning(false);
+      setScanError('이미지 파일을 불러오지 못했습니다. 다른 사진으로 다시 시도해주세요.');
+    };
     reader.readAsDataURL(file);
+
+    // Reset input value so re-selecting same file fires onChange
+    e.target.value = '';
   };
 
   // AI & OCR Scan Analysis
@@ -528,12 +556,20 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   return (
     <div className="relative w-full h-[calc(100vh-4.5rem)] md:h-[750px] md:max-w-2xl md:mx-auto bg-[#0A0B0E] overflow-hidden flex flex-col justify-between md:rounded-3xl md:border md:border-[#2A2D35] md:shadow-2xl">
-      {/* Hidden File Input */}
+      {/* Hidden File Inputs for Smartphone Native Camera & Gallery */}
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleFileUpload}
         accept="image/*"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={cameraInputRef}
+        onChange={handleFileUpload}
+        accept="image/*"
+        capture="environment"
         className="hidden"
       />
 
@@ -626,26 +662,35 @@ export const ScanView: React.FC<ScanViewProps> = ({
             <div className="bg-[#12141C]/95 border border-[#F59E0B]/50 p-4 rounded-2xl backdrop-blur-md shadow-2xl text-center space-y-3">
               <div className="flex items-center justify-center gap-1.5 text-[#F59E0B] font-bold text-xs">
                 <span className="material-symbols-outlined text-[18px]">videocam_off</span>
-                <span>카메라 접근 필요</span>
+                <span>카메라 안내</span>
               </div>
               <p className="text-[11px] text-[#9CA3AF] leading-relaxed">
                 {cameraError}
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 pt-1">
                 <button
-                  onClick={() => startCamera(cameraFacing)}
-                  className="flex-1 py-2 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="w-full py-2.5 px-3 bg-[#3B82F6] hover:bg-[#2563EB] text-white font-bold text-xs rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
                 >
-                  <span className="material-symbols-outlined text-[16px]">videocam</span>
-                  카메라 다시 켜기
+                  <span className="material-symbols-outlined text-[18px]">photo_camera</span>
+                  스마트폰 카메라로 촬영하기
                 </button>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] font-bold text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[16px]">photo_library</span>
-                  갤러리 사진 선택
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#60A5FA] font-bold text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">photo_library</span>
+                    갤러리 사진 선택
+                  </button>
+                  <button
+                    onClick={() => startCamera(cameraFacing)}
+                    className="flex-1 py-2 px-3 bg-[#1E222D] hover:bg-[#262B39] text-[#9CA3AF] hover:text-[#E2E4E9] font-medium text-xs rounded-xl transition-all border border-[#2A2D35] active:scale-95 flex items-center justify-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">refresh</span>
+                    웹캠 다시 시도
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -680,11 +725,14 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
               <div className="space-y-2 pt-1">
                 <button
-                  onClick={handleResetScan}
+                  onClick={() => {
+                    setScanError(null);
+                    cameraInputRef.current?.click();
+                  }}
                   className="w-full py-3 px-4 bg-[#3B82F6] hover:bg-[#2563EB] active:scale-95 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
                 >
                   <span className="material-symbols-outlined text-[18px]">photo_camera</span>
-                  다시 촬영 및 스캔하기
+                  스마트폰 카메라로 다시 촬영
                 </button>
                 <div className="flex gap-2">
                   <button
@@ -911,7 +959,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
         {/* Camera Controls Bar (When not showing final result card) */}
         {!scannedResult && (
-          <div className="absolute bottom-6 left-0 w-full z-20 flex justify-between items-center px-8 sm:px-14">
+          <div className="absolute bottom-6 left-0 w-full z-20 flex justify-between items-center px-6 sm:px-14">
             {/* Gallery / Presets Button */}
             <button
               onClick={() => setShowSamplePicker(true)}
@@ -924,7 +972,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
               <span className="text-xs font-medium">갤러리</span>
             </button>
 
-            {/* Shutter Scan Button */}
+            {/* Center Shutter Scan Button */}
             <button
               disabled={isScanning}
               onClick={captureCameraFrame}
@@ -939,20 +987,16 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </div>
             </button>
 
-            {/* Flash Toggle Button */}
+            {/* Direct Phone Camera Button or Flash Toggle */}
             <button
-              onClick={toggleFlash}
-              className={`flex flex-col items-center gap-1 p-3 rounded-2xl backdrop-blur-md active:scale-95 transition-all shadow-lg pointer-events-auto border ${
-                flashOn
-                  ? 'bg-[#F59E0B] text-black border-[#F59E0B] font-bold shadow-[#F59E0B]/30'
-                  : 'bg-[#12141C]/90 text-[#E2E4E9] border-[#2A2D35] hover:bg-[#1A1D26]'
-              }`}
-              title="플래시 켜기/끄기"
+              onClick={() => cameraInputRef.current?.click()}
+              className="flex flex-col items-center gap-1 p-3 rounded-2xl bg-[#12141C]/90 text-[#E2E4E9] border border-[#2A2D35] hover:bg-[#1A1D26] backdrop-blur-md active:scale-95 transition-all shadow-lg pointer-events-auto"
+              title="스마트폰 카메라로 촬영"
             >
-              <span className="material-symbols-outlined text-[26px]">
-                {flashOn ? 'flash_on' : 'flash_off'}
+              <span className="material-symbols-outlined text-[26px] text-[#34D399]">
+                camera
               </span>
-              <span className="text-xs font-medium">플래시</span>
+              <span className="text-xs font-medium">카메라</span>
             </button>
           </div>
         )}
@@ -967,7 +1011,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                 <span className="material-symbols-outlined text-[#60A5FA]">
                   photo_library
                 </span>
-                인바디 사진 선택 또는 업로드
+                인바디 사진 선택 및 촬영
               </h3>
               <button
                 onClick={() => setShowSamplePicker(false)}
@@ -977,16 +1021,29 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </button>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <button
                 onClick={() => {
+                  setShowSamplePicker(false);
+                  cameraInputRef.current?.click();
+                }}
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-[#3B82F6] to-[#2563EB] hover:from-[#2563EB] hover:to-[#1D4ED8] active:scale-95 text-white font-bold rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/25"
+              >
+                <span className="material-symbols-outlined text-[22px]">photo_camera</span>
+                스마트폰 카메라로 바로 촬영하기
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowSamplePicker(false);
                   fileInputRef.current?.click();
                 }}
-                className="w-full py-3.5 px-4 border-2 border-dashed border-[#3B82F6] bg-[#1A1D26] hover:bg-[#202534] active:scale-95 text-[#60A5FA] font-bold rounded-2xl flex items-center justify-center gap-2 transition-all shadow-md"
+                className="w-full py-3 px-4 border border-[#3B82F6]/60 bg-[#1A1D26] hover:bg-[#202534] active:scale-95 text-[#60A5FA] font-bold rounded-2xl flex items-center justify-center gap-2 transition-all shadow-md"
               >
-                <span className="material-symbols-outlined">file_upload</span>
-                내 기기에서 인바디 결과지 사진 불러오기
+                <span className="material-symbols-outlined text-[20px]">photo_library</span>
+                앨범/갤러리에서 사진 불러오기
               </button>
+
               <button
                 onClick={() => {
                   setShowSamplePicker(false);
