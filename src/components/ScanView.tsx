@@ -326,15 +326,13 @@ export const ScanView: React.FC<ScanViewProps> = ({
       }
 
       setOriginalFullImage(result.base64);
-
-      // Also create a centered InBody crop for crisp readability
-      const cropResult = await cropImageToInBodyRatio(result.base64);
-      setPreviewImage(cropResult.croppedBase64 || result.base64);
+      // Default to FULL original image so no InBody tables or metrics are cut off
+      setPreviewImage(result.base64);
       setImageMeta({
-        width: cropResult.width || result.width,
-        height: cropResult.height || result.height,
+        width: result.width,
+        height: result.height,
       });
-      setIsCroppedView(true);
+      setIsCroppedView(false);
       setShowSamplePicker(false);
     } catch (err) {
       console.warn('Image processing error:', err);
@@ -498,16 +496,15 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
           if (res.ok) {
             const parsed = await res.json();
-            if (parsed.isValidInBody === false) {
+            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
+              setScanProgress(100);
+              const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
-              setScanError(
-                parsed.error ||
-                  '인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요.'
-              );
+              setScannedResult(record);
               return;
             }
 
-            if (parsed && typeof parsed.weight === 'number' && parsed.weight > 0) {
+            if (parsed && parsed.isValidInBody !== false) {
               setScanProgress(100);
               const record = createRecordFromParsed(parsed, imageToAnalyze);
               setIsScanning(false);
@@ -516,20 +513,20 @@ export const ScanView: React.FC<ScanViewProps> = ({
             }
           }
 
-          const errJson = await res.json().catch(() => ({}));
+          // Fallback to record preview so user can review and edit directly without being blocked
+          const fallbackData = await res.json().catch(() => ({}));
+          setScanProgress(100);
+          const record = createRecordFromParsed(fallbackData || {}, imageToAnalyze);
           setIsScanning(false);
-          setScanError(
-            errJson.error ||
-              '인바디 결과지 양식이 인식되지 않았습니다. 체중/골격근량 표가 온전히 보이도록 다시 촬영해주세요.'
-          );
+          setScannedResult(record);
           return;
         } catch (fetchErr) {
-          console.warn('OCR fetch error or timeout:', fetchErr);
+          console.warn('OCR fetch error or timeout, utilizing baseline parse:', fetchErr);
           if (progressTimer) clearInterval(progressTimer);
+          setScanProgress(100);
+          const fallbackRecord = createRecordFromParsed({}, imageToAnalyze);
           setIsScanning(false);
-          setScanError(
-            '인바디 분석 시간 초과 또는 네트워크 지연이 발생했습니다. 다시 촬영하시거나 직접 수치를 입력해주세요.'
-          );
+          setScannedResult(fallbackRecord);
           return;
         }
       }
