@@ -13,18 +13,18 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [title, setTitle] = useState('인바디 측정');
-  const [weight, setWeight] = useState<number>(75.0);
-  const [skeletalMuscleMass, setSkeletalMuscleMass] = useState<number>(30.5);
-  const [bodyFatMass, setBodyFatMass] = useState<number>(21.5);
-  const [bodyFatPercentage, setBodyFatPercentage] = useState<number>(18.0);
-  const [visceralFatLevel, setVisceralFatLevel] = useState<number>(6);
+  const [weight, setWeight] = useState<number>(79.0);
+  const [skeletalMuscleMass, setSkeletalMuscleMass] = useState<number>(30.6);
+  const [bodyFatMass, setBodyFatMass] = useState<number>(24.9);
+  const [bodyFatPercentage, setBodyFatPercentage] = useState<number>(31.6);
+  const [visceralFatLevel, setVisceralFatLevel] = useState<number>(9);
   const [notes, setNotes] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     const yyyyMmDd = date.replace(/-/g, '.');
-    const heightM = 1.78;
+    const heightM = 1.62;
     const bmiVal = +(weight / (heightM * heightM)).toFixed(1);
     const bmrVal = Math.round(370 + 21.6 * (weight - bodyFatMass));
 

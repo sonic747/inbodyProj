@@ -24,6 +24,7 @@ export const ScanDetailModal: React.FC<ScanDetailModalProps> = ({
   const [notes, setNotes] = useState(record.notes || '');
 
   const handleSaveEdit = () => {
+    const h = record.height ? record.height / 100 : 1.62;
     const updated: InBodyRecord = {
       ...record,
       title,
@@ -31,7 +32,7 @@ export const ScanDetailModal: React.FC<ScanDetailModalProps> = ({
       skeletalMuscleMass: Number(skeletalMuscleMass),
       bodyFatMass: Number(bodyFatMass),
       bodyFatPercentage: Number(bodyFatPercentage),
-      bmi: +(Number(weight) / (1.78 * 1.78)).toFixed(1),
+      bmi: +(Number(weight) / (h * h)).toFixed(1),
       notes,
     };
     onUpdateRecord(updated);

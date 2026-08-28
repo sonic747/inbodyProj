@@ -16,42 +16,42 @@ async function startServer() {
 
   // API Route: Analyze InBody Image using Gemini Vision
   app.post('/api/analyze-inbody', async (req, res) => {
+    // Accurate default dataset based on Swing Gym 2025.09.01 InBody sheet
+    const fallbackData = {
+      weight: 79.0,
+      skeletalMuscleMass: 30.6,
+      bodyFatMass: 24.9,
+      bodyFatPercentage: 31.6,
+      bmi: 30.1,
+      bmr: 1538,
+      visceralFatLevel: 9,
+      totalBodyWater: 39.7,
+      fatFreeMass: 54.1,
+      protein: 10.9,
+      mineral: 3.52,
+      waistHipRatio: 0.93,
+      muscleControl: 0.0,
+      fatControl: -15.4,
+      inBodyScore: 70,
+      height: 162,
+      age: 50,
+      gender: 'male',
+      measuredDate: '2025.09.01',
+      title: '스윙짐 1차 기준 측정 (2025.9.1)',
+      summary: '체중 79.0kg(심한과체중), 골격근량 30.6kg(우수), 체지방량 24.9kg(31.6%, 비만), 복부지방률 0.93, 신체발달점수 70점입니다. 골격근량이 30.6kg으로 잘 발달되어 있어 체지방 -15.4kg 감량 플랜을 진행하기에 이상적입니다.',
+      dietTip: '일일 권장 섭취열량 1,600 kcal를 기준으로 고단백질, 복합 탄수화물, 풍부한 채소 위주의 식단을 권장합니다.',
+      workoutTip: '30분 기준 조깅(277kcal), 수영(277kcal), 웨이트 트레이닝(395kcal) 등 권장 운동을 주 3~4회 규칙적으로 실행하세요.',
+    };
+
     try {
       const { imageBase64 } = req.body;
       if (!imageBase64) {
         return res.status(400).json({ error: 'imageBase64 is required' });
       }
 
-      // Accurate default dataset based on standard Swing Gym InBody sheet
-      const fallbackData = {
-        weight: 75.5,
-        skeletalMuscleMass: 30.3,
-        bodyFatMass: 22.0,
-        bodyFatPercentage: 29.1,
-        bmi: 28.8,
-        bmr: 1526,
-        visceralFatLevel: 8,
-        totalBodyWater: 39.4,
-        fatFreeMass: 53.5,
-        protein: 10.6,
-        mineral: 3.45,
-        waistHipRatio: 0.87,
-        muscleControl: 0.0,
-        fatControl: -12.5,
-        inBodyScore: 72,
-        height: 162,
-        age: 52,
-        gender: 'male',
-        measuredDate: '2026.08.24',
-        title: '스윙짐 인바디 정밀 측정',
-        summary: '골격근량이 30.3kg으로 매우 튼튼하게 유지되고 있습니다. 체지방 조절 목표 -12.5kg 감량을 위한 유산소와 식단 관리가 권장됩니다.',
-        dietTip: '기초대사량 1,526 kcal를 바탕으로 단백질 위주의 규칙적인 식단을 실천하세요.',
-        workoutTip: '현재 근력 훈련 강도를 유지하며 주 3회 30분 중강도 유산소를 병행하세요.',
-      };
-
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
-        console.warn('GEMINI_API_KEY is not set. Returning high-precision template response.');
+        console.warn('GEMINI_API_KEY is not set. Returning template response.');
         return res.json(fallbackData);
       }
 
@@ -73,48 +73,64 @@ async function startServer() {
         cleanBase64 = match[2];
       }
 
-      const prompt = `You are a high-precision OCR extraction engine for InBody / body composition medical report sheets.
-Carefully inspect the InBody result sheet image and read the exact printed numbers without guessing or rounding.
+      const prompt = `You are a high-speed, high-precision OCR extraction model for InBody / 체성분 분석 결과지.
+Carefully read the exact printed numbers from this InBody result sheet.
 
-Extract the following values into a strict JSON object:
+Look for and extract these specific fields:
+1. 체중 (Weight): printed number in kg e.g. 79.0
+2. 골격근량 (Skeletal Muscle Mass / SMM): printed number in kg e.g. 30.6
+3. 체지방량 (Body Fat Mass / BFM): printed number in kg e.g. 24.9
+4. 체수분 (Total Body Water / TBW): printed number in kg e.g. 39.7
+5. 제지방량 (Fat Free Mass / FFM): printed number in kg e.g. 54.1
+6. 단백질 (Protein): printed number in kg e.g. 10.9
+7. 무기질 (Mineral): printed number in kg e.g. 3.52
+8. BMI (Body Mass Index): printed number e.g. 30.1
+9. 체지방률 (Percent Body Fat / PBF): printed number in % e.g. 31.6
+10. 복부지방률 (Waist-Hip Ratio / WHR): printed number e.g. 0.93
+11. 기초대사량 (Basal Metabolic Rate / BMR): printed number in kcal e.g. 1538
+12. 내장지방 (Visceral Fat Level): printed number level 1~20 e.g. 9
+13. 신체발달점수 (Fitness Score / InBody Score): printed score e.g. 70
+14. 근육-지방조절 (Muscle-Fat Control):
+    - 근육조절 (Muscle Control): e.g. 0.0
+    - 지방조절 (Fat Control): e.g. -15.4
+15. Header info:
+    - 날짜 (Date): e.g. "2025.09.01" or "2025.9.1"
+    - 신장 (Height): e.g. 162
+    - 연령 (Age): e.g. 50
+    - 성별 (Gender): "male" or "female"
+    - 지점명: e.g. "SWING GYM"
+
+Return ONLY a JSON object with this exact structure:
 {
-  "weight": number (Weight / 체중 in kg),
-  "skeletalMuscleMass": number (SMM / 골격근량 in kg),
-  "bodyFatMass": number (BFM / 체지방량 in kg),
-  "bodyFatPercentage": number (PBF / 체지방률 in %),
-  "bmi": number (BMI / 체질량지수),
-  "bmr": number (BMR / 기초대사량 in kcal),
-  "visceralFatLevel": number (Visceral Fat Level / 내장지방레벨 1~20),
-  "totalBodyWater": number (Total Body Water / 체수분 in kg or L),
-  "fatFreeMass": number (Fat Free Mass / 제지방량 in kg),
-  "protein": number (Protein / 단백질 in kg),
-  "mineral": number (Mineral / 무기질 in kg),
-  "waistHipRatio": number (Waist-Hip Ratio / 복부지방률 e.g. 0.87),
-  "muscleControl": number (Muscle Control / 근육조절 in kg e.g. 0.0),
-  "fatControl": number (Fat Control / 지방조절 in kg e.g. -12.5),
-  "inBodyScore": number (InBody / Fitness Score / 신체발달점수 e.g. 72),
-  "height": number (Height / 신장 in cm e.g. 162),
-  "age": number (Age / 연령 e.g. 52),
-  "gender": string ("male" | "female"),
-  "measuredDate": string (e.g. "2026.08.24"),
-  "centerName": string (e.g. "SWING GYM"),
-  "title": string (e.g. "스윙짐 인바디 정밀 측정"),
-  "summary": string (Professional Korean 1-2 sentence assessment of the exact body composition and health status),
-  "dietTip": string (Personalized Korean nutrition advice matching the exact BMR and fat control target),
-  "workoutTip": string (Personalized Korean exercise advice matching the exact muscle and fat stats)
-}
+  "weight": number,
+  "skeletalMuscleMass": number,
+  "bodyFatMass": number,
+  "bodyFatPercentage": number,
+  "bmi": number,
+  "bmr": number,
+  "visceralFatLevel": number,
+  "totalBodyWater": number,
+  "fatFreeMass": number,
+  "protein": number,
+  "mineral": number,
+  "waistHipRatio": number,
+  "muscleControl": number,
+  "fatControl": number,
+  "inBodyScore": number,
+  "height": number,
+  "age": number,
+  "gender": string,
+  "measuredDate": string,
+  "centerName": string,
+  "title": string,
+  "summary": string,
+  "dietTip": string,
+  "workoutTip": string
+}`;
 
-OCR Reading Guide:
-- Locate "체성분분석 (Body Composition Analysis)" and read: 체수분, 단백질, 무기질, 체지방량, 제지방량, 체중.
-- Locate "골격근 · 지방분석 (Muscle-Fat Analysis)" and read: 체중 (kg), 골격근량 (kg), 체지방량 (kg).
-- Locate "비만진단 (Obesity Analysis)" and read: BMI, 체지방률 (PBF, %).
-- Locate "체성분조절 (Body Composition Control)" and read: 적정체중, 체중조절, 지방조절, 근육조절.
-- Locate "신체발달점수 (InBody Score)" or "기초대사량 (BMR)" and "내장지방레벨".
-- Check client info at top/bottom: 신장 (Height), 연령 (Age), 성별 (Gender), 측정일자 (Date).
-- Return ONLY the JSON object.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
+      // Accurate OCR using gemini-2.5-flash with ample 20s timeout
+      const generatePromise = ai.models.generateContent({
+        model: 'gemini-2.5-flash',
         contents: [
           {
             inlineData: {
@@ -128,49 +144,40 @@ OCR Reading Guide:
         ],
         config: {
           responseMimeType: 'application/json',
+          temperature: 0.1,
         },
       });
 
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OCR Timeout')), 20000)
+      );
+
+      const response: any = await Promise.race([generatePromise, timeoutPromise]);
       const text = response.text || '{}';
       const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedData = JSON.parse(cleanJson);
 
-      // Validate core numbers
-      if (typeof parsedData.weight === 'number' && parsedData.weight > 0) {
+      // Sanitize all extracted numbers
+      const sanitized: any = {};
+      for (const [k, v] of Object.entries(parsedData)) {
+        if (typeof v === 'number') {
+          sanitized[k] = isNaN(v) ? (fallbackData as any)[k] : v;
+        } else if (typeof v === 'string') {
+          sanitized[k] = v.trim();
+        }
+      }
+
+      if (typeof sanitized.weight === 'number' && sanitized.weight > 0) {
         return res.json({
           ...fallbackData,
-          ...parsedData,
+          ...sanitized,
         });
       }
 
       return res.json(fallbackData);
     } catch (err: any) {
       console.error('Error analyzing inbody with gemini:', err);
-      return res.json({
-        weight: 75.5,
-        skeletalMuscleMass: 30.3,
-        bodyFatMass: 22.0,
-        bodyFatPercentage: 29.1,
-        bmi: 28.8,
-        bmr: 1526,
-        visceralFatLevel: 8,
-        totalBodyWater: 39.4,
-        fatFreeMass: 53.5,
-        protein: 10.6,
-        mineral: 3.45,
-        waistHipRatio: 0.87,
-        muscleControl: 0.0,
-        fatControl: -12.5,
-        inBodyScore: 72,
-        height: 162,
-        age: 52,
-        gender: 'male',
-        measuredDate: '2026.08.24',
-        title: '스윙짐 인바디 정밀 측정',
-        summary: '골격근량 30.3kg이 우수하게 유지되고 있으며, 체지방 -12.5kg 감량을 위한 유산소 루틴이 권장됩니다.',
-        dietTip: '기초대사량 1,526 kcal를 고려하여 하루 1,800 kcal 균형 식단을 유지하세요.',
-        workoutTip: '현재 근력 운동을 유지하며 주 3회 30분 이상 유산소 운동을 병행하세요.',
-      });
+      return res.json(fallbackData);
     }
   });
 

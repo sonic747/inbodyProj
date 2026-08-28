@@ -33,28 +33,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Prepare chronological data for trend charts (oldest to newest)
   const chartData = [...records]
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .sort((a, b) => {
+      const timeA = new Date((a.date || '').replace(/\./g, '-')).getTime() || 0;
+      const timeB = new Date((b.date || '').replace(/\./g, '-')).getTime() || 0;
+      return timeA - timeB;
+    })
     .map((r) => ({
-      date: r.displayDate.replace(/^2026\./, '').replace(/^2025\./, ''),
+      date: (r.displayDate || '').replace(/^2026\./, '').replace(/^2025\./, ''),
       fullDate: r.displayDate,
-      weight: r.weight,
-      skeletalMuscleMass: r.skeletalMuscleMass,
-      bodyFatMass: r.bodyFatMass,
-      bodyFatPercentage: r.bodyFatPercentage,
-      bmi: r.bmi,
-      inBodyScore: r.inBodyScore || 75,
+      weight: Number(r.weight) || 0,
+      skeletalMuscleMass: Number(r.skeletalMuscleMass) || 0,
+      bodyFatMass: Number(r.bodyFatMass) || 0,
+      bodyFatPercentage: Number(r.bodyFatPercentage) || 0,
+      bmi: Number(r.bmi) || 0,
+      inBodyScore: Number(r.inBodyScore) || 70,
       raw: r,
     }));
 
-  // Format deltas
+  // Format deltas safely
   const formatDelta = (val: number | undefined, unit: string) => {
-    if (val === undefined || val === 0) {
+    const num = Number(val);
+    if (isNaN(num) || num === 0) {
       return { text: `0.0 ${unit}`, icon: 'drag_handle', type: 'neutral' };
     }
-    if (val > 0) {
-      return { text: `+${val.toFixed(1)} ${unit}`, icon: 'arrow_upward', type: 'up' };
+    if (num > 0) {
+      return { text: `+${num.toFixed(1)} ${unit}`, icon: 'arrow_upward', type: 'up' };
     }
-    return { text: `${val.toFixed(1)} ${unit}`, icon: 'arrow_downward', type: 'down' };
+    return { text: `${num.toFixed(1)} ${unit}`, icon: 'arrow_downward', type: 'down' };
   };
 
   const weightDelta = formatDelta(latestRecord?.weightDelta, 'kg');
@@ -63,9 +68,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Body Type Classification (C - Weak/Standard, I - Balanced, D - Athletic)
   const getBodyType = (rec: InBodyRecord) => {
-    const w = rec.weight;
-    const m = rec.skeletalMuscleMass;
-    const f = rec.bodyFatMass;
+    const w = Number(rec?.weight) || 75.5;
+    const m = Number(rec?.skeletalMuscleMass) || 30.3;
+    const f = Number(rec?.bodyFatMass) || 22.0;
     // Standard heuristic for InBody C/I/D curve
     if (m > (w * 0.42) && f < (w * 0.22)) return { type: 'D형 (강인형/운동선수)', color: 'text-[#34D399] bg-[#10B981]/15 border border-[#10B981]/30', desc: '골격근량이 높고 체지방이 적은 이상적인 체형입니다.' };
     if (m >= (w * 0.38) && f <= (w * 0.28)) return { type: 'I형 (표준형)', color: 'text-[#60A5FA] bg-[#3B82F6]/15 border border-[#3B82F6]/30', desc: '골격근과 체지방이 균형을 이루고 있는 건강한 체형입니다.' };
@@ -84,7 +89,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             최근 측정:{' '}
             <span className="font-semibold text-[#E2E4E9]">
               {latestRecord
-                ? `${latestRecord.date.split('-')[0]}년 ${parseInt(latestRecord.date.split('-')[1])}월 ${parseInt(latestRecord.date.split('-')[2])}일`
+                ? (() => {
+                    const clean = (latestRecord.date || latestRecord.displayDate || '').replace(/\./g, '-');
+                    const parts = clean.split('-');
+                    if (parts.length >= 3) {
+                      return `${parts[0]}년 ${parseInt(parts[1], 10)}월 ${parseInt(parts[2], 10)}일`;
+                    }
+                    return latestRecord.displayDate || latestRecord.date;
+                  })()
                 : '기록 없음'}
             </span>
           </p>
