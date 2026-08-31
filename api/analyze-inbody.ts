@@ -78,15 +78,20 @@ export default async function handler(req: any, res: any) {
     cleanBase64 = cleanBase64.replace(/\s+/g, '');
     addLog('Base64 cleaned', { mimeType, length: cleanBase64.length });
 
-    const systemPrompt = `You are a world-class OCR and document intelligence AI specialized in Korean body composition analysis sheets (InBody / 체성분 분석 결과지 / 인바디 검사지 / InBody 770, 570, 370, 270, 230, InBody Dial, Accuniq, Tanita, SWING GYM printouts, smart scale app screenshots, fitness center reports).
+    const systemPrompt = `You are an expert OCR & body composition document analyzer.
+Your task is to analyze photos or scans of Korean InBody result sheets (인바디 검사 결과지, 체성분 분석표, 스마트 체중계 앱 캡처, 인바디 770/570/370/270/230, 인바디 다이얼, Accuniq, Tanita, 헬스장 측정지).
 
-TASK:
-1. Examine the image carefully. Even if the image is rotated (90 deg, 180 deg, 270 deg), skewed, taken at an angle with a smartphone, or framed with gym background/fingers, find the InBody / body composition results table.
-2. If this image is NOT a body composition analysis report (e.g. food, selfie, landscape, car, random document), return JSON:
-   { "isValidInBody": false, "error": "인바디 결과지 양식이 아닙니다. 체중, 골격근량, 체지방률 표가 선명하게 나오도록 다시 촬영해주세요." }
-3. If this IS a valid InBody or body composition report, extract all numbers and text with 100% precision into the JSON structure below.
+CRITICAL INSTRUCTIONS:
+1. The image comes from a smartphone (iPhone/Android) or camera. It may be:
+   - Taken vertically or horizontally
+   - Rotated (90°, 180°, 270°) or skewed/tilted
+   - Photographed on a desk, gym floor, or held by hand
+   - Showing full paper or cropped table
+2. Identify the body composition table (체중, 골격근량, 체지방량, 체지방률, BMI 등).
+3. Even if some parts are blurred or low-contrast, extract the numbers with best effort.
+4. Only return "isValidInBody": false if the image is COMPLETELY UNRELATED to health/body/inbody (e.g. food picture, landscape, pet, car, selfie without any document). If it looks like ANY test report, receipt, scale screen, or InBody paper, ALWAYS set "isValidInBody": true and extract the numbers.
 
-JSON OUTPUT STRUCTURE (Strict JSON format only):
+JSON SCHEMA (Output valid JSON only):
 {
   "isValidInBody": true,
   "weight": number,
@@ -117,12 +122,24 @@ JSON OUTPUT STRUCTURE (Strict JSON format only):
 
     let responseText = '';
     let successfulModel = '';
-    const modelsToTry = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
+    // Priority order: gemini-3.7-flash (with low thinking for speed), then gemini-flash-latest
+    const modelsToTry = ['gemini-3.7-flash', 'gemini-flash-latest'];
     const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
 
     for (const modelName of modelsToTry) {
       addLog(`Attempting model ${modelName}`);
       try {
+        const config: any = {
+          systemInstruction: systemPrompt,
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        };
+
+        // If using Gemini 3 series, minimize thinking latency for fast OCR response
+        if (modelName.includes('gemini-3')) {
+          config.thinkingConfig = { thinkingLevel: 'LOW' };
+        }
+
         const apiCall = ai.models.generateContent({
           model: modelName,
           contents: [
@@ -136,21 +153,17 @@ JSON OUTPUT STRUCTURE (Strict JSON format only):
                   },
                 },
                 {
-                  text: 'Carefully perform OCR on this Korean InBody / body composition sheet. Extract weight (체중), skeletal muscle mass (골격근량), percent body fat (체지방률), BMI, BMR, etc. Output strict JSON only.',
+                  text: 'Extract the body composition numbers (weight 체중, muscle mass 골격근량, body fat 체지방률, BMI, BMR, etc.) from this image. Output strictly valid JSON.',
                 },
               ],
             },
           ],
-          config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          },
+          config,
         });
 
-        // Guard each individual model attempt with a 15-second timeout
+        // 25 second timeout per attempt
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 15s`)), 15000)
+          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 25s`)), 25000)
         );
 
         const response: any = await Promise.race([apiCall, timeoutPromise]);
@@ -202,11 +215,36 @@ JSON OUTPUT STRUCTURE (Strict JSON format only):
       });
     }
 
-    let weight = typeof parsedData.weight === 'number' ? parsedData.weight : parseFloat(parsedData.weight);
-    let smm = typeof parsedData.skeletalMuscleMass === 'number' ? parsedData.skeletalMuscleMass : parseFloat(parsedData.skeletalMuscleMass);
-    let bfm = typeof parsedData.bodyFatMass === 'number' ? parsedData.bodyFatMass : parseFloat(parsedData.bodyFatMass);
-    let pbf = typeof parsedData.bodyFatPercentage === 'number' ? parsedData.bodyFatPercentage : parseFloat(parsedData.bodyFatPercentage);
-    let height = typeof parsedData.height === 'number' ? parsedData.height : parseFloat(parsedData.height) || 170;
+    // Helper to parse numbers safely from various formats (e.g., "77.9 kg", " 77.9 ", 77.9)
+    const parseNum = (val: any) => {
+      if (typeof val === 'number') return isNaN(val) ? undefined : val;
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/,/g, '').replace(/[^0-9.-]/g, '');
+        const n = parseFloat(cleaned);
+        return isNaN(n) ? undefined : n;
+      }
+      return undefined;
+    };
+
+    let weight = parseNum(parsedData.weight);
+    let smm = parseNum(parsedData.skeletalMuscleMass);
+    let bfm = parseNum(parsedData.bodyFatMass);
+    let pbf = parseNum(parsedData.bodyFatPercentage);
+    let height = parseNum(parsedData.height) || 170;
+
+    // Fallback regex scan on the response text if numbers were embedded in text
+    if (!weight || isNaN(weight)) {
+      const wMatch = responseText.match(/체중[^\d]*([\d.]+)/i) || responseText.match(/weight[^\d]*([\d.]+)/i);
+      if (wMatch) weight = parseFloat(wMatch[1]);
+    }
+    if (!smm || isNaN(smm)) {
+      const sMatch = responseText.match(/골격근량[^\d]*([\d.]+)/i) || responseText.match(/smm[^\d]*([\d.]+)/i);
+      if (sMatch) smm = parseFloat(sMatch[1]);
+    }
+    if (!pbf || isNaN(pbf)) {
+      const pMatch = responseText.match(/체지방률[^\d]*([\d.]+)/i) || responseText.match(/pbf[^\d]*([\d.]+)/i);
+      if (pMatch) pbf = parseFloat(pMatch[1]);
+    }
 
     if (!weight && !smm && !bfm && !pbf) {
       return res.json({

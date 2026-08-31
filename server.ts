@@ -99,52 +99,20 @@ async function startServer() {
       cleanBase64 = cleanBase64.replace(/\s+/g, '');
       addLog('Base64 cleaned', { mimeType, cleanLength: cleanBase64.length });
 
-      const systemPrompt = `You are a world-class OCR and document intelligence AI specialized in Korean body composition analysis sheets (InBody / 체성분 분석 결과지 / 인바디 검사지 / InBody 770, 570, 370, 270, 230, InBody Dial, Accuniq, Tanita, SWING GYM printouts, smart scale app screenshots, fitness center reports).
+      const systemPrompt = `You are an expert OCR & body composition document analyzer.
+Your task is to analyze photos or scans of Korean InBody result sheets (인바디 검사 결과지, 체성분 분석표, 스마트 체중계 앱 캡처, 인바디 770/570/370/270/230, 인바디 다이얼, Accuniq, Tanita, 헬스장 측정지).
 
-IMPORTANT MULTI-DEVICE & ORIENTATION RULES:
-1. The image may be captured with a smartphone camera or uploaded from a mobile album.
-2. It might be oriented normally (0°), rotated sideways (90° or 270°), upside down (180°), or photographed at an angle with perspective distortion, shadows, or background surroundings (desk, gym floor, hands holding paper).
-3. You MUST read all text and numbers accurately regardless of image orientation, rotation angle, or tilt.
+CRITICAL INSTRUCTIONS:
+1. The image comes from a smartphone (iPhone/Android) or camera. It may be:
+   - Taken vertically or horizontally
+   - Rotated (90°, 180°, 270°) or skewed/tilted
+   - Photographed on a desk, gym floor, or held by hand
+   - Showing full paper or cropped table
+2. Identify the body composition table (체중, 골격근량, 체지방량, 체지방률, BMI 등).
+3. Even if some parts are blurred or low-contrast, extract the numbers with best effort.
+4. Only return "isValidInBody": false if the image is COMPLETELY UNRELATED to health/body/inbody (e.g. food picture, landscape, pet, car, selfie without any document). If it looks like ANY test report, receipt, scale screen, or InBody paper, ALWAYS set "isValidInBody": true and extract the numbers.
 
-TASK:
-Step 1. Classification:
-- Check if this image represents an InBody sheet, body composition test result, smart scale report, or fitness assessment document in any form or orientation.
-- Signs of valid sheet: mentions of InBody, 체중 (Weight), 골격근량 (Skeletal Muscle Mass / SMM), 체지방량 (Body Fat Mass), 체지방률 (Percent Body Fat / PBF), BMI, 기초대사량 (BMR), 체수분, 단백질, 무기질, 제지방량, 비만진단, 부위별 근육/체지방, etc.
-- If the image is COMPLETELY UNRELATED (e.g., photo of a meal/food, scenery, landscape, animal/pet, vehicle, face selfie with no document, grocery receipt, or totally black/blank unreadable image):
-  Return ONLY:
-  {
-    "isValidInBody": false,
-    "error": "인바디 결과지가 인식되지 않았습니다. 체중, 골격근량, 체지방률 표가 선명하게 보이도록 다시 촬영하거나 선택해주세요."
-  }
-
-Step 2. Data Extraction:
-- When it is a valid InBody or body composition document, extract the EXACT real numbers visible in this specific photo:
-  * weight: 체중 in kg (number)
-  * skeletalMuscleMass: 골격근량 / SMM in kg (number)
-  * bodyFatMass: 체지방량 in kg (number)
-  * bodyFatPercentage: 체지방률 / PBF in % (number)
-  * bmi: BMI (number)
-  * bmr: 기초대사량 in kcal (number)
-  * visceralFatLevel: 내장지방레벨 (integer 1-20)
-  * totalBodyWater: 체수분 in L or kg (number)
-  * fatFreeMass: 제지방량 in kg (number)
-  * protein: 단백질 in kg (number)
-  * mineral: 무기질 in kg (number)
-  * waistHipRatio: 복부지방률 / WHR (number)
-  * muscleControl: 근육조절 in kg (number)
-  * fatControl: 지방조절 in kg (number)
-  * inBodyScore: 인바디점수 / 신체발달점수 (integer 0-100)
-  * height: 신장 in cm (number)
-  * age: 연령 (number)
-  * gender: 성별 ("male" or "female")
-  * measuredDate: 측정일자 / 검사일시 (string in "YYYY.MM.DD" format)
-  * centerName: 검사기관 / 센터명 (e.g. "SWING GYM" or gym name)
-  * title: descriptive title like "스윙짐 인바디 정밀 측정"
-  * summary: concise professional Korean summary describing their exact numbers
-  * dietTip: personalized nutritional recommendation in Korean
-  * workoutTip: personalized exercise recommendation in Korean
-
-Return ONLY valid JSON matching this schema:
+JSON SCHEMA (Output valid JSON only):
 {
   "isValidInBody": true,
   "weight": number,
@@ -176,13 +144,22 @@ Return ONLY valid JSON matching this schema:
       try {
         let responseText = '';
         let successfulModel = '';
-        const modelsToTry = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
+        const modelsToTry = ['gemini-3.7-flash', 'gemini-flash-latest'];
         const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
         let lastErr: any = null;
 
         for (const modelName of modelsToTry) {
           addLog(`Attempting model ${modelName}`);
           try {
+            const config: any = {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            };
+
+            if (modelName.includes('gemini-3')) {
+              config.thinkingConfig = { thinkingLevel: 'LOW' };
+            }
+
             const apiCall = ai.models.generateContent({
               model: modelName,
               contents: [
@@ -201,15 +178,12 @@ Return ONLY valid JSON matching this schema:
                   ],
                 },
               ],
-              config: {
-                responseMimeType: 'application/json',
-                temperature: 0.1,
-              },
+              config,
             });
 
-            // Guard each individual model attempt with a 15-second timeout
+            // Guard each individual model attempt with a 25-second timeout
             const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error(`Model ${modelName} timed out after 15s`)), 15000)
+              setTimeout(() => reject(new Error(`Model ${modelName} timed out after 25s`)), 25000)
             );
 
             const response: any = await Promise.race([apiCall, timeoutPromise]);
