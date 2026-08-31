@@ -145,9 +145,8 @@ JSON SCHEMA (Output valid JSON only):
         let responseText = '';
         let successfulModel = '';
     const modelsToTry = [
-      { name: 'gemini-2.5-flash', thinking: false },
-      { name: 'gemini-3.7-flash', thinking: false },
       { name: 'gemini-3.6-flash', thinking: false },
+      { name: 'gemini-3.7-flash', thinking: true },
       { name: 'gemini-flash-latest', thinking: false },
     ];
     const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
@@ -165,7 +164,7 @@ JSON SCHEMA (Output valid JSON only):
           config.thinkingConfig = { thinkingLevel: 'LOW' };
         }
 
-        const response: any = await ai.models.generateContent({
+        const apiCall = ai.models.generateContent({
           model: modelName,
           contents: [
             {
@@ -185,6 +184,13 @@ JSON SCHEMA (Output valid JSON only):
           ],
           config,
         });
+
+        // 10-second timeout per attempt to guarantee fast fallback and prevent 55s timeout
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 10s`)), 10000)
+        );
+
+        const response: any = await Promise.race([apiCall, timeoutPromise]);
 
         responseText = response?.text || '';
         if (responseText && responseText.length > 5) {
