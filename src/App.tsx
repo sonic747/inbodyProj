@@ -245,6 +245,48 @@ export default function App() {
     }
   };
 
+  // Handle Full Backup Restore by Admin
+  const handleRestoreBackup = (backupData: {
+    accounts: UserAccount[];
+    recordsByUser: Record<string, InBodyRecord[]>;
+  }) => {
+    try {
+      // 1. Save restored accounts
+      setAccounts(backupData.accounts);
+      localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(backupData.accounts));
+
+      // 2. Save each user's records to localStorage
+      Object.entries(backupData.recordsByUser).forEach(([userId, userRecs]) => {
+        if (Array.isArray(userRecs)) {
+          localStorage.setItem(
+            `${STORAGE_KEY_USER_RECORDS_PREFIX}${userId}`,
+            JSON.stringify(userRecs)
+          );
+        }
+      });
+
+      // 3. Update monitored member and active target
+      const firstMember = backupData.accounts.find((a) => a.role !== 'admin');
+      if (firstMember) {
+        setMonitoredMemberId(firstMember.id);
+        const targetRecs = backupData.recordsByUser[firstMember.id] || [];
+        setRecords(targetRecs);
+      }
+
+      try {
+        confetti({
+          particleCount: 100,
+          spread: 80,
+          origin: { y: 0.5 },
+        });
+      } catch {
+        // ignore
+      }
+    } catch (e) {
+      console.error('Failed to restore backup in App state:', e);
+    }
+  };
+
   // Handle Profile Update (for current profile/targetUser)
   const handleUpdateProfile = (updatedProfile: UserProfile) => {
     if (!targetUser) return;
@@ -422,6 +464,7 @@ export default function App() {
               onAddMember={handleAddMemberByAdmin}
               onUpdateMember={handleUpdateMemberByAdmin}
               onDeleteMember={handleDeleteMemberByAdmin}
+              onRestoreBackup={handleRestoreBackup}
             />
           )}
 

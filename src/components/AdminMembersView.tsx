@@ -10,6 +10,7 @@ interface AdminMembersViewProps {
   onAddMember: (newAccount: UserAccount) => void;
   onUpdateMember: (updatedAccount: UserAccount) => void;
   onDeleteMember: (accountId: string) => void;
+  onRestoreBackup?: (backupData: { accounts: UserAccount[]; recordsByUser: Record<string, InBodyRecord[]> }) => void;
 }
 
 export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
@@ -21,6 +22,7 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
   onAddMember,
   onUpdateMember,
   onDeleteMember,
+  onRestoreBackup,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterGender, setFilterGender] = useState<'all' | 'male' | 'female'>('all');
@@ -51,6 +53,104 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
   // Permanent Delete Confirmation Modal State
   const [deletingAccount, setDeletingAccount] = useState<UserAccount | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Backup & Restore Modal State
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreSuccessInfo, setRestoreSuccessInfo] = useState<string | null>(null);
+
+  // Export JSON Backup
+  const handleExportBackup = () => {
+    try {
+      const recordsByUser: Record<string, InBodyRecord[]> = {};
+      accounts.forEach((acc) => {
+        recordsByUser[acc.id] = getUserRecords(acc.id);
+      });
+
+      const backupPayload = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        appName: 'SwingGym InBody Analyzer',
+        totalAccounts: accounts.length,
+        accounts,
+        recordsByUser,
+      };
+
+      const jsonStr = JSON.stringify(backupPayload, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `inbody_swinggym_backup_${dateStr}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setToastMessage('✅ 전체 회원 및 인바디 데이터가 JSON 파일로 백업되었습니다.');
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (e) {
+      console.error('Backup export failed:', e);
+      setToastMessage('❌ 백업 파일 생성 중 오류가 발생했습니다.');
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+
+  // Import / Restore JSON Backup
+  const handleImportFile = (file: File) => {
+    setRestoreError(null);
+    setRestoreSuccessInfo(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) {
+          setRestoreError('파일 내용이 비어 있습니다.');
+          return;
+        }
+
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object') {
+          setRestoreError('유효하지 않은 JSON 파일 형식입니다.');
+          return;
+        }
+
+        // Validate structure
+        if (!Array.isArray(parsed.accounts) || !parsed.recordsByUser || typeof parsed.recordsByUser !== 'object') {
+          setRestoreError('올바른 인바디 백업 파일 형식이 아닙니다 (accounts 또는 recordsByUser 누락).');
+          return;
+        }
+
+        // Check if admin is preserved
+        const importedAccounts: UserAccount[] = parsed.accounts;
+        const importedRecords: Record<string, InBodyRecord[]> = parsed.recordsByUser;
+
+        if (onRestoreBackup) {
+          onRestoreBackup({
+            accounts: importedAccounts,
+            recordsByUser: importedRecords,
+          });
+        }
+
+        let totalRecs = 0;
+        Object.values(importedRecords).forEach((list) => {
+          if (Array.isArray(list)) totalRecs += list.length;
+        });
+
+        setRestoreSuccessInfo(
+          `성공적으로 복원되었습니다! (회원 ${importedAccounts.length}명, 측정 데이터 ${totalRecs}건)`
+        );
+        setToastMessage(`✅ 백업 데이터 복원 완료! (회원 ${importedAccounts.length}명)`);
+        setTimeout(() => setToastMessage(null), 3500);
+      } catch (err: any) {
+        console.error('Failed to parse backup JSON:', err);
+        setRestoreError(`파일 복원 오류: ${err.message || 'JSON 파싱 실패'}`);
+      }
+    };
+    reader.readAsText(file);
+  };
 
   // Filter only regular members (exclude admin accounts from regular member list)
   const regularMembers = useMemo(() => {
@@ -231,13 +331,28 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="self-start md:self-auto px-4 py-2.5 bg-gradient-to-r from-[#3B82F6] to-[#6366F1] hover:from-[#2563EB] hover:to-[#4F46E5] text-white rounded-2xl text-xs font-bold shadow-lg shadow-blue-500/25 transition-all flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined text-[18px]">person_add</span>
-            신규 회원 직접 등록
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setRestoreError(null);
+                setRestoreSuccessInfo(null);
+                setShowBackupModal(true);
+              }}
+              className="px-3.5 py-2.5 bg-[#1E293B] hover:bg-[#334155] text-white border border-[#475569]/60 rounded-2xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5"
+              title="데이터 백업 및 파일 복원"
+            >
+              <span className="material-symbols-outlined text-[18px] text-emerald-400">cloud_sync</span>
+              <span>데이터 백업/복원</span>
+            </button>
+
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-4 py-2.5 bg-gradient-to-r from-[#3B82F6] to-[#6366F1] hover:from-[#2563EB] hover:to-[#4F46E5] text-white rounded-2xl text-xs font-bold shadow-lg shadow-blue-500/25 transition-all flex items-center gap-2"
+            >
+              <span className="material-symbols-outlined text-[18px]">person_add</span>
+              신규 회원 직접 등록
+            </button>
+          </div>
         </div>
 
         {/* Aggregate Stats Cards */}
@@ -892,9 +1007,137 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
 
       {/* Floating Action Toast */}
       {toastMessage && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-3 bg-red-600/90 text-white border border-red-400/30 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
-          <span className="material-symbols-outlined text-[18px]">check_circle</span>
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-3 bg-[#1E293B] text-white border border-[#3B82F6]/50 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <span className="material-symbols-outlined text-[18px] text-emerald-400">check_circle</span>
           <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Backup & Restore Modal */}
+      {showBackupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-[#12141C] border border-[#2A2D35] rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-5 text-left animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#2A2D35] pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <span className="material-symbols-outlined text-[24px]">cloud_sync</span>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">데이터 백업 및 파일 복원</h3>
+                  <p className="text-xs text-[#9CA3AF]">
+                    서버 장애나 기기 변경에 대비해 전체 회원 및 인바디 측정 데이터를 보관하고 복원합니다.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBackupModal(false)}
+                className="w-8 h-8 rounded-lg bg-[#1A1D27] text-[#9CA3AF] hover:text-white flex items-center justify-center transition-all"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            {/* Current Data Overview */}
+            <div className="p-3.5 bg-[#0D0F16] border border-[#2A2D35] rounded-2xl flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-[#9CA3AF]">
+                <span className="material-symbols-outlined text-[18px] text-[#60A5FA]">database</span>
+                <span>현재 보관 데이터 규모:</span>
+              </div>
+              <div className="font-bold text-white flex items-center gap-3">
+                <span>회원 <strong className="text-[#60A5FA]">{accounts.length}</strong>명</span>
+                <span>•</span>
+                <span>총 인바디 <strong className="text-[#34D399]">{stats.totalRecordsCount}</strong>건</span>
+              </div>
+            </div>
+
+            {/* Section 1: Backup / Export */}
+            <div className="p-4 bg-[#161922] border border-emerald-500/30 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">1. 데이터 파일로 백업 (다운로드)</h4>
+                </div>
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded font-mono">.JSON 포맷</span>
+              </div>
+              <p className="text-xs text-[#9CA3AF] leading-relaxed">
+                모든 회원 계정, 개인 프로필, 목표치 및 전체 인바디 측정 기록을 단일 JSON 파일로 안전하게 PC나 모바일에 다운로드합니다.
+              </p>
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[18px]">download</span>
+                <span>전체 데이터 백업 파일 다운로드 (.json)</span>
+              </button>
+            </div>
+
+            {/* Section 2: Restore / Import */}
+            <div className="p-4 bg-[#161922] border border-blue-500/30 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">2. 백업 파일 업로드로 복원</h4>
+                </div>
+                <span className="text-[10px] text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded font-mono">파일 선택/드래그</span>
+              </div>
+              <p className="text-xs text-[#9CA3AF] leading-relaxed">
+                이전에 백업해둔 JSON 파일을 업로드하면 회원 목록과 모든 측정 기록이 즉시 완벽하게 복구됩니다.
+              </p>
+
+              {/* File Input Box */}
+              <label className="border-2 border-dashed border-[#2A2D35] hover:border-[#3B82F6] rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-colors bg-[#0D0F16] group">
+                <span className="material-symbols-outlined text-2xl text-[#6B7280] group-hover:text-[#60A5FA] mb-1 transition-colors">
+                  upload_file
+                </span>
+                <span className="text-xs font-semibold text-[#E2E4E9] group-hover:text-white">
+                  백업 파일 선택 또는 여기에 드래그
+                </span>
+                <span className="text-[10px] text-[#6B7280] mt-0.5">
+                  inbody_swinggym_backup_*.json 파일 지원
+                </span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleImportFile(file);
+                    }
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+
+              {/* Status feedback */}
+              {restoreError && (
+                <div className="p-3 bg-red-950/30 border border-red-500/40 rounded-xl text-xs text-red-300 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px] text-red-400">error</span>
+                  <span>{restoreError}</span>
+                </div>
+              )}
+
+              {restoreSuccessInfo && (
+                <div className="p-3 bg-emerald-950/30 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[16px] text-emerald-400">check_circle</span>
+                  <span>{restoreSuccessInfo}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBackupModal(false)}
+                className="px-5 py-2.5 bg-[#1A1D27] hover:bg-[#252936] text-[#E2E4E9] rounded-xl text-xs font-bold transition-all"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
