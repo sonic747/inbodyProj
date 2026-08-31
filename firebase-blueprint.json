@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "accounts": {
+      "title": "User Accounts",
+      "description": "User login accounts and profile configuration for gym members and coaches/admins",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "profile": {
+          "type": "object",
+          "properties": {
+            "gender": { "type": "string", "enum": ["male", "female"] },
+            "age": { "type": "number" },
+            "height": { "type": "number" },
+            "targetWeight": { "type": "number" },
+            "targetPbf": { "type": "number" },
+            "avatarUrl": { "type": "string" }
+          }
+        },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "name", "role", "profile"]
+    },
+    "records": {
+      "title": "InBody Measurement Records",
+      "description": "Historical InBody body composition scans and analytics per user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "weight": { "type": "number" },
+        "smm": { "type": "number" },
+        "pbf": { "type": "number" },
+        "bmi": { "type": "number" },
+        "bodyFatMass": { "type": "number" },
+        "score": { "type": "number" },
+        "targetWeight": { "type": "number" },
+        "targetPbf": { "type": "number" },
+        "notes": { "type": "string" },
+        "evaluations": { "type": "object" },
+        "segmentalLean": { "type": "object" },
+        "segmentalFat": { "type": "object" },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["id", "userId", "date", "weight", "smm", "pbf"]
+    }
+  },
+  "firestore": {
+    "/accounts/{accountId}": {
+      "schema": "#/entities/accounts",
+      "description": "User account documents indexed by account id or username"
+    },
+    "/records/{recordId}": {
+      "schema": "#/entities/records",
+      "description": "InBody measurement documents"
+    }
+  }
+}

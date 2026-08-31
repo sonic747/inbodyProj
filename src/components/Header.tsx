@@ -12,6 +12,7 @@ interface HeaderProps {
   title?: string;
   activeTab?: ActiveTab;
   onChangeTab?: (tab: ActiveTab) => void;
+  isCloudSynced?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   title = '스윙짐 인바디',
   activeTab = 'home',
   onChangeTab,
+  isCloudSynced = true,
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -105,6 +107,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Side: User & Admin Status */}
         <div className="flex items-center gap-2">
+          {/* Cloud Sync Status Pill */}
+          <div
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[11px] font-semibold text-emerald-400"
+            title="모든 기기(PC, 모바일, 태블릿)와 실시간 클라우드 동기화 중"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="material-symbols-outlined text-[14px]">cloud_done</span>
+            <span className="hidden md:inline">클라우드 동기화</span>
+          </div>
+
           {/* User Account / Role Badge */}
           <div className="relative" ref={dropdownRef}>
             <button

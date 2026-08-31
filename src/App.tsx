@@ -1,6 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { InBodyRecord, UserProfile, UserAccount, ActiveTab } from './types';
 import { DEFAULT_ACCOUNTS, INITIAL_INBODY_RECORDS, INITIAL_LEE_RECORDS } from './data/initialData';
+import {
+  subscribeToAccounts,
+  subscribeToAllRecords,
+  saveRecordToCloud,
+  deleteRecordFromCloud,
+  saveAccountToCloud,
+  deleteAccountFromCloud,
+  restoreEntireDatabaseToCloud,
+  seedInitialCloudDataIfNeeded,
+} from './lib/firebase';
 import { Header } from './components/Header';
 import { BottomNavBar } from './components/BottomNavBar';
 import { DashboardView } from './components/DashboardView';
@@ -18,14 +28,13 @@ const STORAGE_KEY_ACTIVE_USER_ID = 'inbody_active_user_id_v3';
 const STORAGE_KEY_USER_RECORDS_PREFIX = 'inbody_user_records_v3_';
 
 export default function App() {
-  // 1. Manage Accounts (All registered users in localStorage)
+  // 1. Manage Accounts (State synced with Firestore Cloud in real-time)
   const [accounts, setAccounts] = useState<UserAccount[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_ACCOUNTS);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Ensure admin exists
           if (!parsed.some((a) => a.username === 'admin')) {
             return [...DEFAULT_ACCOUNTS, ...parsed.filter((p) => p.username !== 'admin')];
           }
@@ -38,7 +47,66 @@ export default function App() {
     return DEFAULT_ACCOUNTS;
   });
 
-  // Save accounts to localStorage
+  // Map of all user records synced from Firestore in real-time
+  const [allRecordsMap, setAllRecordsMap] = useState<Record<string, InBodyRecord[]>>(() => {
+    const initialMap: Record<string, InBodyRecord[]> = {};
+    accounts.forEach((acc) => {
+      const saved = localStorage.getItem(`${STORAGE_KEY_USER_RECORDS_PREFIX}${acc.id}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) initialMap[acc.id] = parsed;
+        } catch {
+          // ignore
+        }
+      }
+    });
+    if (!initialMap['user_demo']) initialMap['user_demo'] = INITIAL_INBODY_RECORDS;
+    if (!initialMap['user_lee']) initialMap['user_lee'] = INITIAL_LEE_RECORDS;
+    return initialMap;
+  });
+
+  // 2. Real-time Firestore Cloud Synchronization Setup
+  useEffect(() => {
+    // Attempt initial data seeding if Firestore database is fresh
+    seedInitialCloudDataIfNeeded();
+
+    // Subscribe to Accounts collection
+    const unsubscribeAccounts = subscribeToAccounts((cloudAccounts) => {
+      if (cloudAccounts && cloudAccounts.length > 0) {
+        setAccounts(cloudAccounts);
+        localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(cloudAccounts));
+      }
+    });
+
+    // Subscribe to All Records collection
+    const unsubscribeRecords = subscribeToAllRecords((cloudRecordsMap) => {
+      if (cloudRecordsMap && Object.keys(cloudRecordsMap).length > 0) {
+        setAllRecordsMap((prev) => {
+          const updated = { ...prev, ...cloudRecordsMap };
+          // Cache locally for offline resilience
+          Object.entries(cloudRecordsMap).forEach(([uid, recs]) => {
+            try {
+              localStorage.setItem(
+                `${STORAGE_KEY_USER_RECORDS_PREFIX}${uid}`,
+                JSON.stringify(recs)
+              );
+            } catch {
+              // ignore
+            }
+          });
+          return updated;
+        });
+      }
+    });
+
+    return () => {
+      unsubscribeAccounts();
+      unsubscribeRecords();
+    };
+  }, []);
+
+  // Save accounts to localStorage cache
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(accounts));
@@ -47,7 +115,7 @@ export default function App() {
     }
   }, [accounts]);
 
-  // 2. Manage Current Logged-in User
+  // 3. Manage Current Logged-in User
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
     const activeUserId = localStorage.getItem(STORAGE_KEY_ACTIVE_USER_ID);
     if (activeUserId) {
@@ -56,6 +124,16 @@ export default function App() {
     }
     return null; // Start at login screen if no session
   });
+
+  // Keep currentUser state in sync if account info changes in accounts array
+  useEffect(() => {
+    if (currentUser) {
+      const updated = accounts.find((a) => a.id === currentUser.id);
+      if (updated && JSON.stringify(updated) !== JSON.stringify(currentUser)) {
+        setCurrentUser(updated);
+      }
+    }
+  }, [accounts, currentUser]);
 
   // Save active user ID to localStorage
   useEffect(() => {
@@ -67,29 +145,30 @@ export default function App() {
   }, [currentUser]);
 
   // Helper to load records for a specific user ID
-  const getUserRecords = useCallback((userId: string): InBodyRecord[] => {
-    const saved = localStorage.getItem(`${STORAGE_KEY_USER_RECORDS_PREFIX}${userId}`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch {
-        // fallback
+  const getUserRecords = useCallback(
+    (userId: string): InBodyRecord[] => {
+      if (allRecordsMap[userId] && allRecordsMap[userId].length > 0) {
+        return allRecordsMap[userId];
       }
-    }
-    // Default sample data for preloaded demo users
-    if (userId === 'user_demo') {
-      return INITIAL_INBODY_RECORDS;
-    }
-    if (userId === 'user_lee') {
-      return INITIAL_LEE_RECORDS;
-    }
-    return [];
-  }, []);
+      const saved = localStorage.getItem(`${STORAGE_KEY_USER_RECORDS_PREFIX}${userId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // fallback
+        }
+      }
+      if (userId === 'user_demo') return INITIAL_INBODY_RECORDS;
+      if (userId === 'user_lee') return INITIAL_LEE_RECORDS;
+      return [];
+    },
+    [allRecordsMap]
+  );
 
   const isAdmin = currentUser?.role === 'admin';
 
-  // 3. For Admin Mode: Track the member currently being monitored
+  // 4. For Admin Mode: Track the member currently being monitored
   const [monitoredMemberId, setMonitoredMemberId] = useState<string | null>(() => {
     const regular = accounts.find((a) => a.role !== 'admin');
     return regular ? regular.id : null;
@@ -105,15 +184,16 @@ export default function App() {
     if (isAdmin && monitoredMember) {
       return monitoredMember;
     }
-    return currentUser || DEFAULT_ACCOUNTS[1];
-  }, [isAdmin, monitoredMember, currentUser]);
+    return currentUser || accounts.find((a) => a.role !== 'admin') || DEFAULT_ACCOUNTS[1];
+  }, [isAdmin, monitoredMember, currentUser, accounts]);
 
-  // 4. Current Target Records state
-  const [records, setRecords] = useState<InBodyRecord[]>(() => {
-    return targetUser ? getUserRecords(targetUser.id) : [];
-  });
+  // 5. Current Target Records state (derived from allRecordsMap or targetUser)
+  const targetRecords = useMemo(() => {
+    if (!targetUser) return [];
+    return getUserRecords(targetUser.id);
+  }, [targetUser, getUserRecords]);
 
-  // 5. Active Tab
+  // 6. Active Tab
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     return isAdmin ? 'admin_members' : 'home';
   });
@@ -122,31 +202,6 @@ export default function App() {
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [saveToast, setSaveToast] = useState<{ title: string; weight: number; targetName: string } | null>(null);
-
-  // Sync records when targetUser changes
-  useEffect(() => {
-    if (targetUser) {
-      const recs = getUserRecords(targetUser.id);
-      setRecords(recs);
-    }
-  }, [targetUser, getUserRecords]);
-
-  // Save current target records whenever records state changes
-  useEffect(() => {
-    if (!targetUser) return;
-    try {
-      const safeRecords = records.map((r) => ({
-        ...r,
-        imageUrl: r.imageUrl && r.imageUrl.length > 20000 ? '' : r.imageUrl,
-      }));
-      localStorage.setItem(
-        `${STORAGE_KEY_USER_RECORDS_PREFIX}${targetUser.id}`,
-        JSON.stringify(safeRecords)
-      );
-    } catch (e) {
-      console.warn('LocalStorage save error for user records:', e);
-    }
-  }, [records, targetUser]);
 
   // Ensure member cannot access admin_members tab
   useEffect(() => {
@@ -162,7 +217,6 @@ export default function App() {
 
     if (account.role === 'admin') {
       setActiveTab('admin_members');
-      // default monitored member to first member
       const firstMember = accounts.find((a) => a.role !== 'admin');
       if (firstMember) {
         setMonitoredMemberId(firstMember.id);
@@ -183,14 +237,20 @@ export default function App() {
     }
   };
 
-  // Handle Register
-  const handleRegisterAccount = (newAccount: UserAccount) => {
+  // Handle Register (Cloud + Local)
+  const handleRegisterAccount = async (newAccount: UserAccount) => {
     const updated = [...accounts, newAccount];
     setAccounts(updated);
     setCurrentUser(newAccount);
     setShowAuthModal(false);
     setActiveTab('home');
-    setRecords([]);
+
+    // Sync to Cloud Firestore
+    try {
+      await saveAccountToCloud(newAccount);
+    } catch (e) {
+      console.warn('Cloud save account error:', e);
+    }
 
     try {
       confetti({
@@ -210,11 +270,17 @@ export default function App() {
     setShowAuthModal(true);
   };
 
-  // Handle Adding member by Admin
-  const handleAddMemberByAdmin = (newMember: UserAccount) => {
+  // Handle Adding member by Admin (Cloud + Local)
+  const handleAddMemberByAdmin = async (newMember: UserAccount) => {
     const updated = [...accounts, newMember];
     setAccounts(updated);
     setMonitoredMemberId(newMember.id);
+
+    try {
+      await saveAccountToCloud(newMember);
+    } catch (e) {
+      console.warn('Cloud save new member error:', e);
+    }
 
     try {
       confetti({
@@ -227,35 +293,53 @@ export default function App() {
     }
   };
 
-  // Handle Updating member by Admin
-  const handleUpdateMemberByAdmin = (updatedMember: UserAccount) => {
+  // Handle Updating member by Admin (Cloud + Local)
+  const handleUpdateMemberByAdmin = async (updatedMember: UserAccount) => {
     setAccounts((prev) =>
       prev.map((acc) => (acc.id === updatedMember.id ? updatedMember : acc))
     );
+
+    try {
+      await saveAccountToCloud(updatedMember);
+    } catch (e) {
+      console.warn('Cloud update member error:', e);
+    }
   };
 
-  // Handle Deleting member by Admin
-  const handleDeleteMemberByAdmin = (memberId: string) => {
+  // Handle Deleting member by Admin (Cloud + Local)
+  const handleDeleteMemberByAdmin = async (memberId: string) => {
     setAccounts((prev) => prev.filter((acc) => acc.id !== memberId));
+    setAllRecordsMap((prev) => {
+      const next = { ...prev };
+      delete next[memberId];
+      return next;
+    });
     localStorage.removeItem(`${STORAGE_KEY_USER_RECORDS_PREFIX}${memberId}`);
 
     if (monitoredMemberId === memberId) {
       const remaining = accounts.filter((a) => a.role !== 'admin' && a.id !== memberId);
       setMonitoredMemberId(remaining[0]?.id || null);
     }
+
+    try {
+      await deleteAccountFromCloud(memberId);
+    } catch (e) {
+      console.warn('Cloud delete account error:', e);
+    }
   };
 
-  // Handle Full Backup Restore by Admin
-  const handleRestoreBackup = (backupData: {
+  // Handle Full Backup Restore by Admin (Cloud + Local)
+  const handleRestoreBackup = async (backupData: {
     accounts: UserAccount[];
     recordsByUser: Record<string, InBodyRecord[]>;
   }) => {
     try {
-      // 1. Save restored accounts
+      // 1. Save restored accounts locally & in state
       setAccounts(backupData.accounts);
       localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(backupData.accounts));
 
-      // 2. Save each user's records to localStorage
+      // 2. Save records locally & in state
+      setAllRecordsMap(backupData.recordsByUser);
       Object.entries(backupData.recordsByUser).forEach(([userId, userRecs]) => {
         if (Array.isArray(userRecs)) {
           localStorage.setItem(
@@ -265,13 +349,14 @@ export default function App() {
         }
       });
 
-      // 3. Update monitored member and active target
+      // 3. Update monitored member
       const firstMember = backupData.accounts.find((a) => a.role !== 'admin');
       if (firstMember) {
         setMonitoredMemberId(firstMember.id);
-        const targetRecs = backupData.recordsByUser[firstMember.id] || [];
-        setRecords(targetRecs);
       }
+
+      // 4. Batch Restore to Cloud Firestore!
+      await restoreEntireDatabaseToCloud(backupData.accounts, backupData.recordsByUser);
 
       try {
         confetti({
@@ -283,12 +368,12 @@ export default function App() {
         // ignore
       }
     } catch (e) {
-      console.error('Failed to restore backup in App state:', e);
+      console.error('Failed to restore backup:', e);
     }
   };
 
   // Handle Profile Update (for current profile/targetUser)
-  const handleUpdateProfile = (updatedProfile: UserProfile) => {
+  const handleUpdateProfile = async (updatedProfile: UserProfile) => {
     if (!targetUser) return;
     const updatedAccount: UserAccount = {
       ...targetUser,
@@ -303,35 +388,37 @@ export default function App() {
     if (currentUser?.id === targetUser.id) {
       setCurrentUser(updatedAccount);
     }
+
+    try {
+      await saveAccountToCloud(updatedAccount);
+    } catch (e) {
+      console.warn('Cloud save profile update error:', e);
+    }
   };
 
   // Handle Admin selecting a member for monitoring
   const handleSelectMemberForMonitoring = (member: UserAccount) => {
     setMonitoredMemberId(member.id);
-    const recs = getUserRecords(member.id);
-    setRecords(recs);
     setActiveTab('home');
   };
 
   // Handle Admin scanning for member
   const handleOpenScanForMember = (member: UserAccount) => {
     setMonitoredMemberId(member.id);
-    const recs = getUserRecords(member.id);
-    setRecords(recs);
     setActiveTab('scan');
   };
 
   // Handle Admin opening history for member
   const handleOpenHistoryForMember = (member: UserAccount) => {
     setMonitoredMemberId(member.id);
-    const recs = getUserRecords(member.id);
-    setRecords(recs);
     setActiveTab('history');
   };
 
-  // Handler for adding a newly scanned record
-  const handleAddNewRecord = (newRecord: InBodyRecord) => {
-    const prevLatest = records[0];
+  // Handler for adding a newly scanned record (Cloud + Local)
+  const handleAddNewRecord = async (newRecord: InBodyRecord) => {
+    if (!targetUser) return;
+    const existingRecs = getUserRecords(targetUser.id);
+    const prevLatest = existingRecs[0];
     const weight = Number(newRecord.weight) || 75.5;
     const smm = Number(newRecord.skeletalMuscleMass) || 30.3;
     const bfm = Number(newRecord.bodyFatMass) || 22.0;
@@ -373,7 +460,12 @@ export default function App() {
       imageUrl: newRecord.imageUrl && newRecord.imageUrl.length > 20000 ? '' : newRecord.imageUrl,
     };
 
-    setRecords((prev) => [sanitizedRecord, ...prev]);
+    // Update local state immediately for instant feedback
+    setAllRecordsMap((prev) => ({
+      ...prev,
+      [targetUser.id]: [sanitizedRecord, ...(prev[targetUser.id] || [])],
+    }));
+
     setSelectedRecord(null);
     setActiveTab('home');
     setSaveToast({
@@ -386,6 +478,13 @@ export default function App() {
       setSaveToast(null);
     }, 4500);
 
+    // Save to Cloud Firestore in real-time
+    try {
+      await saveRecordToCloud(sanitizedRecord, targetUser.id);
+    } catch (e) {
+      console.warn('Cloud save record error:', e);
+    }
+
     try {
       confetti({
         particleCount: 60,
@@ -397,27 +496,52 @@ export default function App() {
     }
   };
 
-  const handleUpdateRecord = (updated: InBodyRecord) => {
-    setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+  // Handle Update Record (Cloud + Local)
+  const handleUpdateRecord = async (updated: InBodyRecord) => {
+    if (!targetUser) return;
+    setAllRecordsMap((prev) => ({
+      ...prev,
+      [targetUser.id]: (prev[targetUser.id] || []).map((r) => (r.id === updated.id ? updated : r)),
+    }));
     setSelectedRecord(updated);
+
+    try {
+      await saveRecordToCloud(updated, targetUser.id);
+    } catch (e) {
+      console.warn('Cloud update record error:', e);
+    }
   };
 
-  const handleDeleteRecord = (id: string) => {
-    setRecords((prev) => prev.filter((r) => r.id !== id));
+  // Handle Delete Record (Cloud + Local)
+  const handleDeleteRecord = async (id: string) => {
+    if (!targetUser) return;
+    setAllRecordsMap((prev) => ({
+      ...prev,
+      [targetUser.id]: (prev[targetUser.id] || []).filter((r) => r.id !== id),
+    }));
     if (selectedRecord?.id === id) {
       setSelectedRecord(null);
+    }
+
+    try {
+      await deleteRecordFromCloud(id);
+    } catch (e) {
+      console.warn('Cloud delete record error:', e);
     }
   };
 
   const handleResetData = () => {
     if (!targetUser) return;
+    let newRecs: InBodyRecord[] = [];
     if (targetUser.id === 'user_demo') {
-      setRecords(INITIAL_INBODY_RECORDS);
+      newRecs = INITIAL_INBODY_RECORDS;
     } else if (targetUser.id === 'user_lee') {
-      setRecords(INITIAL_LEE_RECORDS);
-    } else {
-      setRecords([]);
+      newRecs = INITIAL_LEE_RECORDS;
     }
+    setAllRecordsMap((prev) => ({
+      ...prev,
+      [targetUser.id]: newRecs,
+    }));
   };
 
   const currentDisplayProfile = targetUser ? targetUser.profile : DEFAULT_ACCOUNTS[0].profile;
@@ -471,7 +595,7 @@ export default function App() {
           {/* 2. Personal / Monitored Member Dashboard View */}
           {activeTab === 'home' && (
             <DashboardView
-              records={records}
+              records={targetRecords}
               userProfile={currentDisplayProfile}
               onOpenScan={() => setActiveTab('scan')}
               onOpenManualEntry={() => setShowManualEntry(true)}
@@ -494,10 +618,17 @@ export default function App() {
           {/* 4. History View */}
           {activeTab === 'history' && (
             <HistoryView
-              records={records}
+              records={targetRecords}
               onSelectRecord={(rec) => setSelectedRecord(rec)}
               onDeleteRecord={handleDeleteRecord}
-              onClearAllRecords={() => setRecords([])}
+              onClearAllRecords={() => {
+                if (targetUser) {
+                  setAllRecordsMap((prev) => ({
+                    ...prev,
+                    [targetUser.id]: [],
+                  }));
+                }
+              }}
               onOpenManualEntry={() => setShowManualEntry(true)}
             />
           )}
@@ -512,7 +643,7 @@ export default function App() {
               onNavigateToAdminMembers={() => setActiveTab('admin_members')}
               onLogout={handleLogout}
               onResetData={handleResetData}
-              totalRecordsCount={records.length}
+              totalRecordsCount={targetRecords.length}
             />
           )}
         </main>
