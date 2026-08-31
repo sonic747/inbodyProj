@@ -229,7 +229,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions with EXIF orientation correction
   const compressImageFile = async (file: File): Promise<{ base64: string; width: number; height: number }> => {
-    const maxDimension = 1600;
+    const maxDimension = 1200;
     addDebugLog('info', '이미지 압축 및 정규화 시작', {
       fileName: file.name,
       fileSizeKB: (file.size / 1024).toFixed(1) + ' KB',
@@ -264,7 +264,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(bitmap, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.85);
+          const compressed = canvas.toDataURL('image/jpeg', 0.80);
           if (typeof bitmap.close === 'function') bitmap.close();
           addDebugLog('success', 'createImageBitmap(EXIF보정) 변환 완료', {
             original: `${origWidth}x${origHeight}`,
@@ -1400,38 +1400,57 @@ export const ScanView: React.FC<ScanViewProps> = ({
               </div>
 
               <div className="space-y-2 pt-1">
+                {previewImage && (
+                  <button
+                    onClick={() => {
+                      setScanError(null);
+                      triggerScanAnalysis(previewImage);
+                    }}
+                    className="w-full py-3 px-4 bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] hover:from-[#2563EB] hover:to-[#7C3AED] active:scale-95 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">bolt</span>
+                    현재 사진으로 AI 재시도 (빠른 분석)
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
+                    const fallbackRecord = createRecordFromParsed(
+                      { weight: 70.0, skeletalMuscleMass: 30.0, bodyFatPercentage: 22.0 },
+                      previewImage || undefined
+                    );
                     setScanError(null);
-                    setPreviewImage(null);
-                    openNativeCamera();
+                    setScannedResult(fallbackRecord);
+                    setIsEditingMetrics(true);
                   }}
-                  className="w-full py-3 px-4 bg-[#3B82F6] hover:bg-[#2563EB] active:scale-95 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
+                  className="w-full py-2.5 px-4 bg-[#1E222D] hover:bg-[#262B39] border border-[#3B82F6]/50 active:scale-95 text-[#60A5FA] font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2"
                 >
-                  <span className="material-symbols-outlined text-[18px]">photo_camera</span>
-                  스마트폰 카메라로 다시 촬영
+                  <span className="material-symbols-outlined text-[18px]">edit_note</span>
+                  사진 보며 수치 직접 확인 및 등록하기
                 </button>
+
                 <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setScanError(null);
+                      setPreviewImage(null);
+                      openNativeCamera();
+                    }}
+                    className="flex-1 py-2 px-3 bg-[#161822] hover:bg-[#1E222D] border border-[#2A2D35] text-[#E2E4E9] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+                    카메라 다시 촬영
+                  </button>
                   <button
                     onClick={() => {
                       setScanError(null);
                       setPreviewImage(null);
                       openGallery();
                     }}
-                    className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#60A5FA] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2 px-3 bg-[#161822] hover:bg-[#1E222D] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
                   >
                     <span className="material-symbols-outlined text-[16px]">photo_library</span>
-                    갤러리 사진 변경
-                  </button>
-                  <button
-                    onClick={() => {
-                      setScanError(null);
-                      onOpenManualEntry();
-                    }}
-                    className="flex-1 py-2.5 px-3 bg-[#1E222D] hover:bg-[#262B39] border border-[#2A2D35] text-[#9CA3AF] hover:text-[#E2E4E9] font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">edit_note</span>
-                    직접 수치 입력
+                    갤러리 선택
                   </button>
                 </div>
               </div>

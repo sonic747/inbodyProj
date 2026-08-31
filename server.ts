@@ -144,66 +144,65 @@ JSON SCHEMA (Output valid JSON only):
       try {
         let responseText = '';
         let successfulModel = '';
-        const modelsToTry = ['gemini-3.7-flash', 'gemini-flash-latest'];
-        const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
-        let lastErr: any = null;
+    const modelsToTry = [
+      { name: 'gemini-2.5-flash', thinking: false },
+      { name: 'gemini-3.7-flash', thinking: false },
+      { name: 'gemini-3.6-flash', thinking: false },
+      { name: 'gemini-flash-latest', thinking: false },
+    ];
+    const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
+    let lastErr: any = null;
 
-        for (const modelName of modelsToTry) {
-          addLog(`Attempting model ${modelName}`);
-          try {
-            const config: any = {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-            };
+    for (const { name: modelName, thinking } of modelsToTry) {
+      addLog(`Attempting model ${modelName}`);
+      try {
+        const config: any = {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        };
 
-            if (modelName.includes('gemini-3')) {
-              config.thinkingConfig = { thinkingLevel: 'LOW' };
-            }
+        if (thinking) {
+          config.thinkingConfig = { thinkingLevel: 'LOW' };
+        }
 
-            const apiCall = ai.models.generateContent({
-              model: modelName,
-              contents: [
+        const response: any = await ai.models.generateContent({
+          model: modelName,
+          contents: [
+            {
+              role: 'user',
+              parts: [
                 {
-                  role: 'user',
-                  parts: [
-                    {
-                      inlineData: {
-                        mimeType,
-                        data: cleanBase64,
-                      },
-                    },
-                    {
-                      text: systemPrompt,
-                    },
-                  ],
+                  inlineData: {
+                    mimeType,
+                    data: cleanBase64,
+                  },
+                },
+                {
+                  text: systemPrompt,
                 },
               ],
-              config,
-            });
+            },
+          ],
+          config,
+        });
 
-            // Guard each individual model attempt with a 25-second timeout
-            const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error(`Model ${modelName} timed out after 25s`)), 25000)
-            );
-
-            const response: any = await Promise.race([apiCall, timeoutPromise]);
-            responseText = response?.text || '';
-            if (responseText) {
-              successfulModel = modelName;
-              modelAttempts.push({ model: modelName, ok: true });
-              addLog(`Model ${modelName} succeeded`, { responseLength: responseText.length });
-              break;
-            } else {
-              modelAttempts.push({ model: modelName, ok: false, error: 'Empty text returned' });
-              addLog(`Model ${modelName} returned empty text`);
-            }
-          } catch (mErr: any) {
-            const errMsg = mErr?.message || String(mErr);
-            addLog(`Model ${modelName} failed`, { error: errMsg });
-            modelAttempts.push({ model: modelName, ok: false, error: errMsg });
-            lastErr = mErr;
-          }
+        responseText = response?.text || '';
+        if (responseText && responseText.length > 5) {
+          successfulModel = modelName;
+          modelAttempts.push({ model: modelName, ok: true });
+          addLog(`Model ${modelName} succeeded`, { responseLength: responseText.length });
+          break;
+        } else {
+          modelAttempts.push({ model: modelName, ok: false, error: 'Empty text returned' });
+          addLog(`Model ${modelName} returned empty text`);
         }
+      } catch (mErr: any) {
+        const errMsg = mErr?.message || String(mErr);
+        addLog(`Model ${modelName} failed`, { error: errMsg });
+        modelAttempts.push({ model: modelName, ok: false, error: errMsg });
+        lastErr = mErr;
+      }
+    }
 
         if (!responseText && lastErr) {
           throw lastErr;

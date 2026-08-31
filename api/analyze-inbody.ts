@@ -122,11 +122,15 @@ JSON SCHEMA (Output valid JSON only):
 
     let responseText = '';
     let successfulModel = '';
-    // Priority order: gemini-3.7-flash (with low thinking for speed), then gemini-flash-latest
-    const modelsToTry = ['gemini-3.7-flash', 'gemini-flash-latest'];
+    const modelsToTry = [
+      { name: 'gemini-2.5-flash', thinking: false },
+      { name: 'gemini-3.7-flash', thinking: false },
+      { name: 'gemini-3.6-flash', thinking: false },
+      { name: 'gemini-flash-latest', thinking: false },
+    ];
     const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
 
-    for (const modelName of modelsToTry) {
+    for (const { name: modelName, thinking } of modelsToTry) {
       addLog(`Attempting model ${modelName}`);
       try {
         const config: any = {
@@ -135,12 +139,11 @@ JSON SCHEMA (Output valid JSON only):
           temperature: 0.1,
         };
 
-        // If using Gemini 3 series, minimize thinking latency for fast OCR response
-        if (modelName.includes('gemini-3')) {
+        if (thinking) {
           config.thinkingConfig = { thinkingLevel: 'LOW' };
         }
 
-        const apiCall = ai.models.generateContent({
+        const response: any = await ai.models.generateContent({
           model: modelName,
           contents: [
             {
@@ -161,18 +164,14 @@ JSON SCHEMA (Output valid JSON only):
           config,
         });
 
-        // 25 second timeout per attempt
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 25s`)), 25000)
-        );
-
-        const response: any = await Promise.race([apiCall, timeoutPromise]);
         responseText = response?.text || '';
-        if (responseText) {
+        if (responseText && responseText.length > 5) {
           successfulModel = modelName;
           modelAttempts.push({ model: modelName, ok: true });
           addLog(`Model ${modelName} succeeded`);
           break;
+        } else {
+          modelAttempts.push({ model: modelName, ok: false, error: 'Empty text returned' });
         }
       } catch (mErr: any) {
         const errMsg = mErr?.message || String(mErr);
