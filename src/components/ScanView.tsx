@@ -229,7 +229,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
 
   // Helper: Compress and normalize smartphone photo into standard JPEG base64 & extract dimensions with EXIF orientation correction
   const compressImageFile = async (file: File): Promise<{ base64: string; width: number; height: number }> => {
-    const maxDimension = 2400;
+    const maxDimension = 1600;
     addDebugLog('info', '이미지 압축 및 정규화 시작', {
       fileName: file.name,
       fileSizeKB: (file.size / 1024).toFixed(1) + ' KB',
@@ -264,7 +264,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(bitmap, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.92);
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
           if (typeof bitmap.close === 'function') bitmap.close();
           addDebugLog('success', 'createImageBitmap(EXIF보정) 변환 완료', {
             original: `${origWidth}x${origHeight}`,
@@ -310,7 +310,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', 0.92);
+          const compressed = canvas.toDataURL('image/jpeg', 0.85);
           addDebugLog('success', 'Standard Image Canvas 변환 완료', {
             original: `${origWidth}x${origHeight}`,
             resized: `${width}x${height}`,

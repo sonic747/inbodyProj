@@ -123,7 +123,7 @@ JSON OUTPUT STRUCTURE (Strict JSON format only):
     for (const modelName of modelsToTry) {
       addLog(`Attempting model ${modelName}`);
       try {
-        const response: any = await ai.models.generateContent({
+        const apiCall = ai.models.generateContent({
           model: modelName,
           contents: [
             {
@@ -147,7 +147,14 @@ JSON OUTPUT STRUCTURE (Strict JSON format only):
             temperature: 0.1,
           },
         });
-        responseText = response.text || '';
+
+        // Guard each individual model attempt with a 15-second timeout
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 15s`)), 15000)
+        );
+
+        const response: any = await Promise.race([apiCall, timeoutPromise]);
+        responseText = response?.text || '';
         if (responseText) {
           successfulModel = modelName;
           modelAttempts.push({ model: modelName, ok: true });
