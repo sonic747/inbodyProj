@@ -13,51 +13,57 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [title, setTitle] = useState('인바디 측정');
-  const [weight, setWeight] = useState<number>(79.0);
-  const [skeletalMuscleMass, setSkeletalMuscleMass] = useState<number>(30.6);
-  const [bodyFatMass, setBodyFatMass] = useState<number>(24.9);
-  const [bodyFatPercentage, setBodyFatPercentage] = useState<number>(31.6);
-  const [visceralFatLevel, setVisceralFatLevel] = useState<number>(9);
+  const [weight, setWeight] = useState<string>('72.5');
+  const [skeletalMuscleMass, setSkeletalMuscleMass] = useState<string>('31.2');
+  const [bodyFatMass, setBodyFatMass] = useState<string>('15.4');
+  const [bodyFatPercentage, setBodyFatPercentage] = useState<string>('21.2');
+  const [visceralFatLevel, setVisceralFatLevel] = useState<string>('6');
   const [notes, setNotes] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    const numWeight = Number(weight) || 70;
+    const numSmm = Number(skeletalMuscleMass) || 30;
+    const numBfm = Number(bodyFatMass) || 15;
+    const numPbf = Number(bodyFatPercentage) || 20;
+    const numVisceral = Number(visceralFatLevel) || 5;
+
     const yyyyMmDd = date.replace(/-/g, '.');
-    const heightM = 1.62;
-    const bmiVal = +(weight / (heightM * heightM)).toFixed(1);
-    const bmrVal = Math.round(370 + 21.6 * (weight - bodyFatMass));
+    const heightM = 1.72;
+    const bmiVal = +(numWeight / (heightM * heightM)).toFixed(1);
+    const bmrVal = Math.round(370 + 21.6 * (numWeight - numBfm));
 
     const newRecord: InBodyRecord = {
       id: `rec-${Date.now()}`,
       date: date,
       displayDate: yyyyMmDd,
       title: title || '직접 입력',
-      weight: Number(weight),
-      skeletalMuscleMass: Number(skeletalMuscleMass),
-      bodyFatMass: Number(bodyFatMass),
-      bodyFatPercentage: Number(bodyFatPercentage),
+      weight: numWeight,
+      skeletalMuscleMass: numSmm,
+      bodyFatMass: numBfm,
+      bodyFatPercentage: numPbf,
       bmi: bmiVal,
       bmr: bmrVal,
-      visceralFatLevel: Number(visceralFatLevel),
-      totalBodyWater: +(weight * 0.58).toFixed(1),
+      visceralFatLevel: numVisceral,
+      totalBodyWater: +(numWeight * 0.58).toFixed(1),
       inBodyScore: Math.min(
         100,
-        Math.max(60, Math.round(80 + (skeletalMuscleMass - 30) * 2 - (bodyFatPercentage - 18) * 1.5))
+        Math.max(60, Math.round(80 + (numSmm - 30) * 2 - (numPbf - 18) * 1.5))
       ),
       notes,
       aiFeedback: {
-        summary: `체중 ${weight}kg, 골격근량 ${skeletalMuscleMass}kg, 체지방률 ${bodyFatPercentage}%로 기록되었습니다.`,
+        summary: `체중 ${numWeight}kg, 골격근량 ${numSmm}kg, 체지방률 ${numPbf}%로 기록되었습니다.`,
         dietTip: '충분한 단백질 섭취와 규칙적인 식사 주기를 유지하세요.',
         workoutTip: '주 3~4회 웨이트 트레이닝과 적절한 유산소 운동을 병행하세요.',
         evaluation: 'good',
       },
       segmentalMuscle: {
-        rightArm: +(skeletalMuscleMass * 0.103).toFixed(1),
-        leftArm: +(skeletalMuscleMass * 0.101).toFixed(1),
-        trunk: +(skeletalMuscleMass * 0.77).toFixed(1),
-        rightLeg: +(skeletalMuscleMass * 0.29).toFixed(1),
-        leftLeg: +(skeletalMuscleMass * 0.288).toFixed(1),
+        rightArm: +(numSmm * 0.103).toFixed(1),
+        leftArm: +(numSmm * 0.101).toFixed(1),
+        trunk: +(numSmm * 0.77).toFixed(1),
+        rightLeg: +(numSmm * 0.29).toFixed(1),
+        leftLeg: +(numSmm * 0.288).toFixed(1),
       },
     };
 
@@ -112,8 +118,9 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
                 step="0.1"
                 required
                 value={weight}
-                onChange={(e) => setWeight(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm focus:border-[#3B82F6] outline-none"
+                onChange={(e) => setWeight(e.target.value)}
+                placeholder="예: 72.5"
+                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               />
             </div>
             <div>
@@ -125,8 +132,9 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
                 step="0.1"
                 required
                 value={skeletalMuscleMass}
-                onChange={(e) => setSkeletalMuscleMass(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm focus:border-[#3B82F6] outline-none"
+                onChange={(e) => setSkeletalMuscleMass(e.target.value)}
+                placeholder="예: 31.2"
+                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               />
             </div>
             <div>
@@ -138,8 +146,9 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
                 step="0.1"
                 required
                 value={bodyFatMass}
-                onChange={(e) => setBodyFatMass(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm focus:border-[#3B82F6] outline-none"
+                onChange={(e) => setBodyFatMass(e.target.value)}
+                placeholder="예: 15.4"
+                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               />
             </div>
             <div>
@@ -151,8 +160,9 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
                 step="0.1"
                 required
                 value={bodyFatPercentage}
-                onChange={(e) => setBodyFatPercentage(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm focus:border-[#3B82F6] outline-none"
+                onChange={(e) => setBodyFatPercentage(e.target.value)}
+                placeholder="예: 21.2"
+                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               />
             </div>
             <div className="sm:col-span-2">
@@ -162,8 +172,9 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
                 min="1"
                 max="20"
                 value={visceralFatLevel}
-                onChange={(e) => setVisceralFatLevel(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm focus:border-[#3B82F6] outline-none"
+                onChange={(e) => setVisceralFatLevel(e.target.value)}
+                placeholder="예: 6"
+                className="w-full p-2.5 rounded-xl border border-[#2A2D35] bg-[#0D0F16] text-[#E2E4E9] font-medium text-sm placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               />
             </div>
             <div className="sm:col-span-2">

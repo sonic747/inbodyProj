@@ -30,10 +30,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [regPassword, setRegPassword] = useState('');
   const [regName, setRegName] = useState('');
   const [regGender, setRegGender] = useState<'male' | 'female'>('male');
-  const [regAge, setRegAge] = useState(30);
-  const [regHeight, setRegHeight] = useState(172);
-  const [regTargetWeight, setRegTargetWeight] = useState(68.0);
-  const [regTargetPbf, setRegTargetPbf] = useState(18.0);
+  const [regAge, setRegAge] = useState('');
+  const [regHeight, setRegHeight] = useState('');
+  const [regTargetWeight, setRegTargetWeight] = useState('');
+  const [regTargetPbf, setRegTargetPbf] = useState('');
   const [regError, setRegError] = useState('');
 
   if (!isOpen) return null;
@@ -54,12 +54,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } else {
       setLoginError('아이디 또는 비밀번호가 일치하지 않습니다.');
     }
-  };
-
-  const handleQuickFill = (u: string, p: string) => {
-    setLoginUsername(u);
-    setLoginPassword(p);
-    setLoginError('');
   };
 
   const handleRegisterSubmit = (e: React.FormEvent) => {
@@ -86,11 +80,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const newProfile: UserProfile = {
       name: trimmedName,
-      age: Number(regAge) || 30,
+      age: regAge ? Number(regAge) : 30,
       gender: regGender,
-      height: Number(regHeight) || 170,
-      targetWeight: Number(regTargetWeight) || 65,
-      targetBodyFatPercentage: Number(regTargetPbf) || 18,
+      height: regHeight ? Number(regHeight) : 170,
+      targetWeight: regTargetWeight ? Number(regTargetWeight) : 65,
+      targetBodyFatPercentage: regTargetPbf ? Number(regTargetPbf) : 18,
       avatarUrl: defaultAvatar,
     };
 
@@ -114,7 +108,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {canDismiss && onClose && (
           <button
             onClick={onClose}
-            className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#1A1D27] hover:bg-[#252936] text-[#9CA3AF] flex items-center justify-center transition-all"
+            className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#1A1D26] hover:bg-[#252936] text-[#9CA3AF] flex items-center justify-center transition-all"
             aria-label="닫기"
           >
             <span className="material-symbols-outlined text-[20px]">close</span>
@@ -134,53 +128,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </p>
         </div>
 
-        {/* Quick Demo Credentials Guide Card */}
-        <div className="p-3.5 bg-[#0D0F16] border border-[#3B82F6]/30 rounded-2xl mb-5 space-y-2">
-          <div className="text-[11px] font-bold text-[#60A5FA] flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[15px]">badge</span>
-            접속 계정 안내 (원클릭 자동입력)
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
-            {/* Admin Quick Fill */}
-            <button
-              type="button"
-              onClick={() => handleQuickFill('admin', '1111')}
-              className="p-2 bg-[#1A1D27] hover:bg-[#252936] border border-amber-500/30 rounded-xl flex items-center justify-between text-left transition-all group"
-            >
-              <div>
-                <div className="text-xs font-bold text-amber-300 flex items-center gap-1">
-                  <span>👑 센터 관리자</span>
-                </div>
-                <div className="text-[10px] text-[#9CA3AF]">
-                  ID: <span className="font-mono text-white">admin</span> / PW: <span className="font-mono text-white">1111</span>
-                </div>
-              </div>
-              <span className="text-[10px] font-bold text-amber-400 opacity-80 group-hover:opacity-100">
-                입력
-              </span>
-            </button>
-
-            {/* Member Quick Fill (Demo) */}
-            <button
-              type="button"
-              onClick={() => handleQuickFill('demo', '123')}
-              className="p-2 bg-[#1A1D27] hover:bg-[#252936] border border-blue-500/30 rounded-xl flex items-center justify-between text-left transition-all group"
-            >
-              <div>
-                <div className="text-xs font-bold text-blue-400 flex items-center gap-1">
-                  <span>👤 김철수 회원</span>
-                </div>
-                <div className="text-[10px] text-[#9CA3AF]">
-                  ID: <span className="font-mono text-white">demo</span> / PW: <span className="font-mono text-white">123</span>
-                </div>
-              </div>
-              <span className="text-[10px] font-bold text-blue-400 opacity-80 group-hover:opacity-100">
-                입력
-              </span>
-            </button>
-          </div>
-        </div>
-
         {/* Tab Switcher */}
         <div className="grid grid-cols-2 p-1 bg-[#0A0C10] border border-[#2A2D35] rounded-2xl mb-5">
           <button
@@ -189,7 +136,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               setMode('login');
               setLoginError('');
             }}
-            className={`py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            className={`py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
               mode === 'login'
                 ? 'bg-[#2563EB] text-white shadow-md shadow-blue-500/30'
                 : 'text-[#9CA3AF] hover:text-white'
@@ -204,7 +151,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               setMode('register');
               setRegError('');
             }}
-            className={`py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            className={`py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
               mode === 'register'
                 ? 'bg-[#2563EB] text-white shadow-md shadow-blue-500/30'
                 : 'text-[#9CA3AF] hover:text-white'
@@ -237,8 +184,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="text"
                   value={loginUsername}
                   onChange={(e) => setLoginUsername(e.target.value)}
-                  placeholder="아이디를 입력하세요 (예: admin 또는 demo)"
+                  placeholder="아이디를 입력하세요"
                   required
+                  autoFocus
                   className="w-full pl-10 pr-3 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-sm text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                 />
               </div>
@@ -290,7 +238,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="text"
                   value={regUsername}
                   onChange={(e) => setRegUsername(e.target.value)}
-                  placeholder="예: user1"
+                  placeholder="아이디"
                   required
                   className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                 />
@@ -319,7 +267,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="text"
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
-                  placeholder="예: 홍길동"
+                  placeholder="이름"
                   required
                   className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                 />
@@ -363,10 +311,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <input
                   type="number"
                   value={regAge}
-                  onChange={(e) => setRegAge(Number(e.target.value))}
+                  onChange={(e) => setRegAge(e.target.value)}
+                  placeholder="예: 30"
                   min={10}
                   max={100}
-                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
+                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                 />
               </div>
               <div>
@@ -376,10 +325,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <input
                   type="number"
                   value={regHeight}
-                  onChange={(e) => setRegHeight(Number(e.target.value))}
+                  onChange={(e) => setRegHeight(e.target.value)}
+                  placeholder="예: 172"
                   min={100}
                   max={230}
-                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
+                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                 />
               </div>
             </div>
@@ -393,8 +343,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="number"
                   step="0.1"
                   value={regTargetWeight}
-                  onChange={(e) => setRegTargetWeight(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#fd761a] font-bold focus:border-[#fd761a] outline-none"
+                  onChange={(e) => setRegTargetWeight(e.target.value)}
+                  placeholder="예: 65.0"
+                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#fd761a] font-bold placeholder-[#6B7280] focus:border-[#fd761a] outline-none"
                 />
               </div>
               <div>
@@ -405,8 +356,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="number"
                   step="0.1"
                   value={regTargetPbf}
-                  onChange={(e) => setRegTargetPbf(Number(e.target.value))}
-                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#34D399] font-bold focus:border-[#34D399] outline-none"
+                  onChange={(e) => setRegTargetPbf(e.target.value)}
+                  placeholder="예: 18.0"
+                  className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#34D399] font-bold placeholder-[#6B7280] focus:border-[#34D399] outline-none"
                 />
               </div>
             </div>

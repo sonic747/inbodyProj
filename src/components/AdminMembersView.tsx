@@ -32,19 +32,42 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
   const [addPassword, setAddPassword] = useState('1234');
   const [addName, setAddName] = useState('');
   const [addGender, setAddGender] = useState<'male' | 'female'>('male');
-  const [addAge, setAddAge] = useState(30);
-  const [addHeight, setAddHeight] = useState(172);
-  const [addTargetWeight, setAddTargetWeight] = useState(68.0);
-  const [addTargetPbf, setAddTargetPbf] = useState(18.0);
+  const [addAge, setAddAge] = useState('');
+  const [addHeight, setAddHeight] = useState('');
+  const [addTargetWeight, setAddTargetWeight] = useState('');
+  const [addTargetPbf, setAddTargetPbf] = useState('');
   const [addError, setAddError] = useState('');
 
   // Edit Member Modal State
   const [editingAccount, setEditingAccount] = useState<UserAccount | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editGender, setEditGender] = useState<'male' | 'female'>('male');
+  const [editAge, setEditAge] = useState('');
+  const [editHeight, setEditHeight] = useState('');
+  const [editTargetWeight, setEditTargetWeight] = useState('');
+  const [editTargetPbf, setEditTargetPbf] = useState('');
+
+  // Permanent Delete Confirmation Modal State
+  const [deletingAccount, setDeletingAccount] = useState<UserAccount | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Filter only regular members (exclude admin accounts from regular member list)
   const regularMembers = useMemo(() => {
     return accounts.filter((a) => a.role !== 'admin');
   }, [accounts]);
+
+  // Handle open edit modal
+  const handleOpenEditModal = (member: UserAccount) => {
+    setEditingAccount(member);
+    setEditName(member.name);
+    setEditPassword(member.password);
+    setEditGender(member.profile.gender);
+    setEditAge(String(member.profile.age || ''));
+    setEditHeight(String(member.profile.height || ''));
+    setEditTargetWeight(String(member.profile.targetWeight || ''));
+    setEditTargetPbf(String(member.profile.targetBodyFatPercentage || ''));
+  };
 
   // Aggregate stats across all members
   const stats = useMemo(() => {
@@ -138,11 +161,11 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
 
     const newProfile: UserProfile = {
       name: trimmedName,
-      age: Number(addAge) || 30,
+      age: addAge ? Number(addAge) : 30,
       gender: addGender,
-      height: Number(addHeight) || 170,
-      targetWeight: Number(addTargetWeight) || 65,
-      targetBodyFatPercentage: Number(addTargetPbf) || 18,
+      height: addHeight ? Number(addHeight) : 170,
+      targetWeight: addTargetWeight ? Number(addTargetWeight) : 65,
+      targetBodyFatPercentage: addTargetPbf ? Number(addTargetPbf) : 18,
       avatarUrl: defaultAvatar,
     };
 
@@ -160,13 +183,32 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
     setShowAddModal(false);
     setAddUsername('');
     setAddName('');
+    setAddAge('');
+    setAddHeight('');
+    setAddTargetWeight('');
+    setAddTargetPbf('');
   };
 
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAccount) return;
 
-    onUpdateMember(editingAccount);
+    const updatedAccount: UserAccount = {
+      ...editingAccount,
+      name: editName.trim() || editingAccount.name,
+      password: editPassword,
+      profile: {
+        ...editingAccount.profile,
+        name: editName.trim() || editingAccount.name,
+        gender: editGender,
+        age: editAge ? Number(editAge) : editingAccount.profile.age,
+        height: editHeight ? Number(editHeight) : editingAccount.profile.height,
+        targetWeight: editTargetWeight ? Number(editTargetWeight) : editingAccount.profile.targetWeight,
+        targetBodyFatPercentage: editTargetPbf ? Number(editTargetPbf) : editingAccount.profile.targetBodyFatPercentage,
+      },
+    };
+
+    onUpdateMember(updatedAccount);
     setEditingAccount(null);
   };
 
@@ -351,18 +393,14 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   {/* Actions Menu */}
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => setEditingAccount(member)}
+                      onClick={() => handleOpenEditModal(member)}
                       className="w-8 h-8 rounded-xl bg-[#1A1D27] hover:bg-[#252936] text-[#9CA3AF] hover:text-white flex items-center justify-center transition-all"
                       title="회원 정보 수정"
                     >
                       <span className="material-symbols-outlined text-[16px]">edit</span>
                     </button>
                     <button
-                      onClick={() => {
-                        if (confirm(`'${member.name}' 회원의 계정과 모든 측정 데이터를 삭제하시겠습니까?`)) {
-                          onDeleteMember(member.id);
-                        }
-                      }}
+                      onClick={() => setDeletingAccount(member)}
                       className="w-8 h-8 rounded-xl bg-[#1A1D27] hover:bg-red-500/20 text-[#9CA3AF] hover:text-red-400 flex items-center justify-center transition-all"
                       title="회원 삭제"
                     >
@@ -553,10 +591,11 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   <input
                     type="number"
                     value={addAge}
-                    onChange={(e) => setAddAge(Number(e.target.value))}
+                    onChange={(e) => setAddAge(e.target.value)}
+                    placeholder="예: 30"
                     min={10}
                     max={100}
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                   />
                 </div>
                 <div>
@@ -566,10 +605,11 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   <input
                     type="number"
                     value={addHeight}
-                    onChange={(e) => setAddHeight(Number(e.target.value))}
+                    onChange={(e) => setAddHeight(e.target.value)}
+                    placeholder="예: 172"
                     min={100}
                     max={230}
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                   />
                 </div>
               </div>
@@ -583,8 +623,9 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                     type="number"
                     step="0.1"
                     value={addTargetWeight}
-                    onChange={(e) => setAddTargetWeight(Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#fd761a] font-bold focus:border-[#fd761a] outline-none"
+                    onChange={(e) => setAddTargetWeight(e.target.value)}
+                    placeholder="예: 65.0"
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#fd761a] font-bold placeholder-[#6B7280] focus:border-[#fd761a] outline-none"
                   />
                 </div>
                 <div>
@@ -595,8 +636,9 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                     type="number"
                     step="0.1"
                     value={addTargetPbf}
-                    onChange={(e) => setAddTargetPbf(Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#34D399] font-bold focus:border-[#34D399] outline-none"
+                    onChange={(e) => setAddTargetPbf(e.target.value)}
+                    placeholder="예: 18.0"
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#34D399] font-bold placeholder-[#6B7280] focus:border-[#34D399] outline-none"
                   />
                 </div>
               </div>
@@ -638,13 +680,9 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  value={editingAccount.password}
-                  onChange={(e) =>
-                    setEditingAccount({
-                      ...editingAccount,
-                      password: e.target.value,
-                    })
-                  }
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  placeholder="비밀번호 입력"
                   required
                   className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
                 />
@@ -657,14 +695,9 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   </label>
                   <input
                     type="text"
-                    value={editingAccount.name}
-                    onChange={(e) =>
-                      setEditingAccount({
-                        ...editingAccount,
-                        name: e.target.value,
-                        profile: { ...editingAccount.profile, name: e.target.value },
-                      })
-                    }
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="이름 입력"
                     required
                     className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
                   />
@@ -674,16 +707,8 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                     성별
                   </label>
                   <select
-                    value={editingAccount.profile.gender}
-                    onChange={(e) =>
-                      setEditingAccount({
-                        ...editingAccount,
-                        profile: {
-                          ...editingAccount.profile,
-                          gender: e.target.value as 'male' | 'female',
-                        },
-                      })
-                    }
+                    value={editGender}
+                    onChange={(e) => setEditGender(e.target.value as 'male' | 'female')}
                     className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
                   >
                     <option value="male">남성</option>
@@ -699,17 +724,12 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   </label>
                   <input
                     type="number"
-                    value={editingAccount.profile.age}
-                    onChange={(e) =>
-                      setEditingAccount({
-                        ...editingAccount,
-                        profile: {
-                          ...editingAccount.profile,
-                          age: Number(e.target.value),
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
+                    value={editAge}
+                    onChange={(e) => setEditAge(e.target.value)}
+                    placeholder="예: 30"
+                    min={10}
+                    max={100}
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                   />
                 </div>
                 <div>
@@ -718,17 +738,12 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   </label>
                   <input
                     type="number"
-                    value={editingAccount.profile.height}
-                    onChange={(e) =>
-                      setEditingAccount({
-                        ...editingAccount,
-                        profile: {
-                          ...editingAccount.profile,
-                          height: Number(e.target.value),
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white focus:border-[#3B82F6] outline-none"
+                    value={editHeight}
+                    onChange={(e) => setEditHeight(e.target.value)}
+                    placeholder="예: 172"
+                    min={100}
+                    max={230}
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
                   />
                 </div>
               </div>
@@ -741,17 +756,10 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   <input
                     type="number"
                     step="0.1"
-                    value={editingAccount.profile.targetWeight}
-                    onChange={(e) =>
-                      setEditingAccount({
-                        ...editingAccount,
-                        profile: {
-                          ...editingAccount.profile,
-                          targetWeight: Number(e.target.value),
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#fd761a] font-bold focus:border-[#fd761a] outline-none"
+                    value={editTargetWeight}
+                    onChange={(e) => setEditTargetWeight(e.target.value)}
+                    placeholder="예: 65.0"
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#fd761a] font-bold placeholder-[#6B7280] focus:border-[#fd761a] outline-none"
                   />
                 </div>
                 <div>
@@ -761,29 +769,132 @@ export const AdminMembersView: React.FC<AdminMembersViewProps> = ({
                   <input
                     type="number"
                     step="0.1"
-                    value={editingAccount.profile.targetBodyFatPercentage}
-                    onChange={(e) =>
-                      setEditingAccount({
-                        ...editingAccount,
-                        profile: {
-                          ...editingAccount.profile,
-                          targetBodyFatPercentage: Number(e.target.value),
-                        },
-                      })
-                    }
-                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#34D399] font-bold focus:border-[#34D399] outline-none"
+                    value={editTargetPbf}
+                    onChange={(e) => setEditTargetPbf(e.target.value)}
+                    placeholder="예: 18.0"
+                    className="w-full px-3 py-2 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs text-[#34D399] font-bold placeholder-[#6B7280] focus:border-[#34D399] outline-none"
                   />
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-bold shadow-md transition-all mt-3"
-              >
-                수정 내용 저장
-              </button>
+              <div className="pt-3 mt-3 border-t border-[#2A2D35] flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeletingAccount(editingAccount);
+                  }}
+                  className="px-3 py-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+                  title="회원 계정 및 측정 데이터 완전 삭제"
+                >
+                  <span className="material-symbols-outlined text-[16px]">delete_forever</span>
+                  회원 영구 삭제
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingAccount(null)}
+                    className="px-3.5 py-2 bg-[#1A1D27] hover:bg-[#252936] text-[#9CA3AF] rounded-xl text-xs font-bold transition-all"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 transition-all"
+                  >
+                    수정 완료
+                  </button>
+                </div>
+              </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Permanent Delete Confirmation Modal (In-App Modal to replace window.confirm) */}
+      {deletingAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-[#12141C] border border-red-500/40 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 text-left animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-500/30 flex items-center justify-center text-red-400 shrink-0">
+                <span className="material-symbols-outlined text-[28px]">warning</span>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">회원 계정 영구 삭제</h3>
+                <p className="text-xs text-red-400 font-semibold">이 작업은 취소할 수 없습니다.</p>
+              </div>
+            </div>
+
+            {/* Target Member Info */}
+            <div className="p-4 bg-[#0D0F16] border border-[#2A2D35] rounded-2xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl overflow-hidden bg-[#1A1D26] ring-1 ring-white/10 shrink-0">
+                  <img
+                    src={deletingAccount.profile.avatarUrl}
+                    alt={deletingAccount.name}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <span>{deletingAccount.name}</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-gray-300">
+                      ID: {deletingAccount.username}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[#9CA3AF] mt-0.5">
+                    인바디 측정 기록 {getUserRecords(deletingAccount.id).length}건 보유
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Warning Details */}
+            <div className="text-xs text-[#9CA3AF] leading-relaxed bg-red-950/20 border border-red-900/30 p-3.5 rounded-xl space-y-1.5">
+              <p className="font-semibold text-red-300">⚠️ 삭제 시 아래 데이터가 완전히 영구 제거됩니다:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-[11px] text-[#D1D5DB]">
+                <li>회원 기본 프로필 및 로그인 계정 정보</li>
+                <li>모든 인바디 스캔 내역 및 체성분 측정 데이터</li>
+                <li>체중/근육량/체지방 변화 그래프 추세 기록</li>
+              </ul>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeletingAccount(null)}
+                className="px-4 py-2.5 bg-[#1A1D27] hover:bg-[#252936] text-[#E2E4E9] rounded-xl text-xs font-bold transition-all"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetName = deletingAccount.name;
+                  const targetId = deletingAccount.id;
+                  onDeleteMember(targetId);
+                  setDeletingAccount(null);
+                  setEditingAccount(null);
+                  setToastMessage(`'${targetName}' 회원의 계정과 모든 데이터가 영구 삭제되었습니다.`);
+                  setTimeout(() => setToastMessage(null), 3000);
+                }}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-600/30 transition-all flex items-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[16px]">delete_forever</span>
+                영구 삭제 확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Action Toast */}
+      {toastMessage && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-3 bg-red-600/90 text-white border border-red-400/30 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <span className="material-symbols-outlined text-[18px]">check_circle</span>
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>

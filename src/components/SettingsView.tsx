@@ -24,33 +24,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const isAdmin = currentUser?.role === 'admin';
   const [name, setName] = useState(userProfile.name);
-  const [age, setAge] = useState(userProfile.age);
+  const [age, setAge] = useState(String(userProfile.age ?? ''));
   const [gender, setGender] = useState<'male' | 'female'>(userProfile.gender);
-  const [height, setHeight] = useState(userProfile.height);
-  const [targetWeight, setTargetWeight] = useState(userProfile.targetWeight);
+  const [height, setHeight] = useState(String(userProfile.height ?? ''));
+  const [targetWeight, setTargetWeight] = useState(String(userProfile.targetWeight ?? ''));
   const [targetBodyFatPercentage, setTargetBodyFatPercentage] = useState(
-    userProfile.targetBodyFatPercentage
+    String(userProfile.targetBodyFatPercentage ?? '')
   );
   const [savedToast, setSavedToast] = useState(false);
 
   useEffect(() => {
     setName(userProfile.name);
-    setAge(userProfile.age);
+    setAge(String(userProfile.age ?? ''));
     setGender(userProfile.gender);
-    setHeight(userProfile.height);
-    setTargetWeight(userProfile.targetWeight);
-    setTargetBodyFatPercentage(userProfile.targetBodyFatPercentage);
+    setHeight(String(userProfile.height ?? ''));
+    setTargetWeight(String(userProfile.targetWeight ?? ''));
+    setTargetBodyFatPercentage(String(userProfile.targetBodyFatPercentage ?? ''));
   }, [userProfile]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     onUpdateProfile({
       name,
-      age: Number(age),
+      age: age ? Number(age) : userProfile.age,
       gender,
-      height: Number(height),
-      targetWeight: Number(targetWeight),
-      targetBodyFatPercentage: Number(targetBodyFatPercentage),
+      height: height ? Number(height) : userProfile.height,
+      targetWeight: targetWeight ? Number(targetWeight) : userProfile.targetWeight,
+      targetBodyFatPercentage: targetBodyFatPercentage ? Number(targetBodyFatPercentage) : userProfile.targetBodyFatPercentage,
       avatarUrl: userProfile.avatarUrl,
     });
     setSavedToast(true);
@@ -213,10 +213,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <input
               type="number"
               value={age}
-              onChange={(e) => setAge(Number(e.target.value))}
+              onChange={(e) => setAge(e.target.value)}
+              placeholder="예: 30"
               min={10}
               max={100}
-              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-white focus:border-[#3B82F6] outline-none"
+              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               required
             />
           </div>
@@ -226,10 +227,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <input
               type="number"
               value={height}
-              onChange={(e) => setHeight(Number(e.target.value))}
+              onChange={(e) => setHeight(e.target.value)}
+              placeholder="예: 172"
               min={100}
               max={230}
-              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-white focus:border-[#3B82F6] outline-none"
+              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-white placeholder-[#6B7280] focus:border-[#3B82F6] outline-none"
               required
             />
           </div>
@@ -242,8 +244,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               type="number"
               step="0.1"
               value={targetWeight}
-              onChange={(e) => setTargetWeight(Number(e.target.value))}
-              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-[#fd761a] font-bold focus:border-[#fd761a] outline-none"
+              onChange={(e) => setTargetWeight(e.target.value)}
+              placeholder="예: 65.0"
+              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-[#fd761a] font-bold placeholder-[#6B7280] focus:border-[#fd761a] outline-none"
               required
             />
           </div>
@@ -256,8 +259,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               type="number"
               step="0.1"
               value={targetBodyFatPercentage}
-              onChange={(e) => setTargetBodyFatPercentage(Number(e.target.value))}
-              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-[#34D399] font-bold focus:border-[#34D399] outline-none"
+              onChange={(e) => setTargetBodyFatPercentage(e.target.value)}
+              placeholder="예: 18.0"
+              className="w-full px-3.5 py-2.5 bg-[#0D0F16] border border-[#2A2D35] rounded-xl text-xs sm:text-sm text-[#34D399] font-bold placeholder-[#6B7280] focus:border-[#34D399] outline-none"
               required
             />
           </div>
