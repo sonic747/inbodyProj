@@ -1,13 +1,13 @@
-import { InBodyRecord, UserProfile } from '../types';
+import { InBodyRecord, UserProfile, UserAccount } from '../types';
 
 export const DEFAULT_USER_PROFILE: UserProfile = {
-  name: '스윙짐 회원',
+  name: '김철수',
   age: 51,
   gender: 'male',
   height: 162,
   targetWeight: 63.6,
   targetBodyFatPercentage: 18.0,
-  avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAhzp5GWLllFY2Q-h64iCmaeux00obLwK1dixTy6_V-f4KbJ9gVrWZUdmIngAhxSsiVopLoD-EVc-LQ8WPEFCtbVj187UBmCzibc-F3gren7bhBT8oAFLptaK0TvRvOplxSeJjaqswvKgmlDUVqxVpY5c3od16Ldh-Gjs_kN1NqK0gcrE4wHGnsK5V2nj0qiqPKkAZi-3KW5hP7d3q0wJzsEOELIm3JH_MAlBge2bDxrWzfQVqc3HVPvg',
+  avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
 };
 
 export const INITIAL_INBODY_RECORDS: InBodyRecord[] = [
@@ -106,5 +106,98 @@ export const INITIAL_INBODY_RECORDS: InBodyRecord[] = [
       lean: { rightArm: '표준', leftArm: '표준', trunk: '표준', rightLeg: '표준', leftLeg: '표준' },
       fat: { rightArm: '표준이상', leftArm: '표준이상', trunk: '표준이상', rightLeg: '표준이상', leftLeg: '표준이상' },
     },
+  },
+];
+
+export const INITIAL_LEE_RECORDS: InBodyRecord[] = [
+  {
+    id: 'rec-lee-20260815',
+    date: '2026-08-15',
+    displayDate: '2026.08.15',
+    title: '스윙짐 정기 체성분 점검',
+    weight: 54.8,
+    weightDelta: -1.2,
+    skeletalMuscleMass: 24.5,
+    skeletalMuscleDelta: 0.5,
+    bodyFatMass: 11.2,
+    bodyFatMassDelta: -1.7,
+    bodyFatPercentage: 20.4,
+    bodyFatPercentageDelta: -2.8,
+    bmi: 19.4,
+    bmr: 1340,
+    visceralFatLevel: 4,
+    totalBodyWater: 32.5,
+    fatFreeMass: 43.6,
+    protein: 8.6,
+    mineral: 2.5,
+    waistHipRatio: 0.76,
+    muscleControl: 0.0,
+    fatControl: -0.5,
+    inBodyScore: 84,
+    height: 168,
+    age: 29,
+    gender: 'female',
+    centerName: 'SWING GYM',
+    notes: '필라테스 및 하체 근력 루틴 병행 후 체지방 20.4% 도달, 골격근 24.5kg 상승!',
+    aiFeedback: {
+      summary: '신장 168cm 기준 이상적인 근육형 날씬 체형입니다. 골격근량이 24.5kg으로 매우 우수하며 체지방률 20.4%로 최적의 건강 상태를 유지 중입니다.',
+      dietTip: '충분한 복합 탄수화물과 운동 후 20g 내외 단백질 보충을 권장합니다.',
+      workoutTip: '현재의 밸런스 트레이닝과 근력 강화를 유지하세요.',
+      evaluation: 'excellent',
+    },
+  },
+];
+
+export const DEFAULT_ACCOUNTS: UserAccount[] = [
+  {
+    id: 'admin_master',
+    username: 'admin',
+    password: '1111',
+    name: '센터 관리자',
+    role: 'admin',
+    profile: {
+      name: '센터 관리자 (Admin)',
+      age: 36,
+      gender: 'male',
+      height: 178,
+      targetWeight: 74.0,
+      targetBodyFatPercentage: 14.0,
+      avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+    },
+    createdAt: '2026-01-01',
+  },
+  {
+    id: 'user_demo',
+    username: 'demo',
+    password: '123',
+    name: '김철수',
+    role: 'member',
+    profile: {
+      name: '김철수',
+      age: 51,
+      gender: 'male',
+      height: 162,
+      targetWeight: 63.6,
+      targetBodyFatPercentage: 18.0,
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+    },
+    createdAt: '2026-08-01',
+  },
+  {
+    id: 'user_lee',
+    username: 'lee',
+    password: '123',
+    name: '이지은',
+    role: 'member',
+    profile: {
+      name: '이지은',
+      age: 29,
+      gender: 'female',
+      height: 168,
+      targetWeight: 53.0,
+      targetBodyFatPercentage: 19.5,
+      avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
+    },
+    createdAt: '2026-08-10',
   },
 ];

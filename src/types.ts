@@ -59,4 +59,14 @@ export interface UserProfile {
   avatarUrl: string;
 }
 
-export type ActiveTab = 'home' | 'scan' | 'history' | 'settings';
+export interface UserAccount {
+  id: string; // Unique ID (e.g. "user-xxx" or username)
+  username: string; // Login ID
+  password: string; // Password
+  name: string; // Display name
+  role: 'admin' | 'member'; // 'admin' can view all members, 'member' only views own data
+  profile: UserProfile;
+  createdAt: string;
+}
+
+export type ActiveTab = 'home' | 'scan' | 'history' | 'settings' | 'admin_members';
