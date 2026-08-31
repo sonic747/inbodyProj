@@ -176,7 +176,7 @@ Return ONLY valid JSON matching this schema:
       try {
         let responseText = '';
         let successfulModel = '';
-        const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+        const modelsToTry = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest'];
         const modelAttempts: Array<{ model: string; ok: boolean; error?: string }> = [];
         let lastErr: any = null;
 
