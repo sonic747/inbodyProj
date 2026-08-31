@@ -145,7 +145,7 @@ JSON SCHEMA (Output valid JSON only):
         let responseText = '';
         let successfulModel = '';
     const modelsToTry = [
-      { name: 'gemini-3.6-flash', thinking: false },
+      { name: 'gemini-3.1-flash-lite', thinking: false },
       { name: 'gemini-3.7-flash', thinking: true },
       { name: 'gemini-flash-latest', thinking: false },
     ];
@@ -185,9 +185,9 @@ JSON SCHEMA (Output valid JSON only):
           config,
         });
 
-        // 10-second timeout per attempt to guarantee fast fallback and prevent 55s timeout
+        // 22-second timeout per attempt to give vision processing ample time
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 10s`)), 10000)
+          setTimeout(() => reject(new Error(`Model ${modelName} timed out after 22s`)), 22000)
         );
 
         const response: any = await Promise.race([apiCall, timeoutPromise]);
