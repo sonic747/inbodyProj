@@ -314,7 +314,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <span className="font-semibold">{data.bodyFatPercentage} %</span>
                         </div>
                         <div className="flex justify-between gap-4 text-[#9CA3AF]">
-                          <span>인바디 점수:</span>
+                          <span>신체발달점수:</span>
                           <span className="font-semibold text-white">{data.inBodyScore} 점</span>
                         </div>
                       </div>
@@ -465,7 +465,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   인바디 AI 종합 진단
                 </span>
                 <span className="text-xs bg-gradient-to-r from-[#3B82F6] to-[#8B5CF6] text-white px-2.5 py-0.5 rounded-full font-bold shadow-sm shadow-blue-500/20">
-                  인바디 점수 {latestRecord.inBodyScore || 78}점
+                  신체발달점수 {latestRecord.inBodyScore || 78}점
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-[#E2E4E9] leading-relaxed font-medium">

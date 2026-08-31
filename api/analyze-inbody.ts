@@ -78,20 +78,20 @@ export default async function handler(req: any, res: any) {
     cleanBase64 = cleanBase64.replace(/\s+/g, '');
     addLog('Base64 cleaned', { mimeType, length: cleanBase64.length });
 
-    const systemPrompt = `You are an expert OCR & body composition document analyzer.
-Your task is to analyze photos or scans of Korean InBody result sheets (인바디 검사 결과지, 체성분 분석표, 스마트 체중계 앱 캡처, 인바디 770/570/370/270/230, 인바디 다이얼, Accuniq, Tanita, 헬스장 측정지).
+    const systemPrompt = `당신은 한국 인바디(InBody) 결과지 및 체성분 검사표 전문 AI OCR 분석가입니다.
+스마트폰(iPhone/Android), 카메라로 촬영된 한국어 인바디 결과지(인바디 770/570/370/270/230, 인바디 다이얼, Accuniq, Tanita, 헬스장 체성분표 등)를 정밀 분석합니다.
 
-CRITICAL INSTRUCTIONS:
-1. The image comes from a smartphone (iPhone/Android) or camera. It may be:
-   - Taken vertically or horizontally
-   - Rotated (90°, 180°, 270°) or skewed/tilted
-   - Photographed on a desk, gym floor, or held by hand
-   - Showing full paper or cropped table
-2. Identify the body composition table (체중, 골격근량, 체지방량, 체지방률, BMI 등).
-3. Even if some parts are blurred or low-contrast, extract the numbers with best effort.
-4. Only return "isValidInBody": false if the image is COMPLETELY UNRELATED to health/body/inbody (e.g. food picture, landscape, pet, car, selfie without any document). If it looks like ANY test report, receipt, scale screen, or InBody paper, ALWAYS set "isValidInBody": true and extract the numbers.
+[핵심 지침]
+1. 사진이 회전(90°, 180°, 270°)되어 있거나, 기울어져 있거나, 일부 그림자가 있어도 최대한 수치를 정확히 추출하세요.
+2. 체중(weight), 골격근량(skeletalMuscleMass), 체지방량(bodyFatMass), 체지방률(bodyFatPercentage), BMI, 기초대사량(bmr), 내장지방레벨(visceralFatLevel), 복부지방률(waistHipRatio), 신체발달점수(inBodyScore) 등을 판독합니다.
+3. 완전히 관계없는 사진(풍경, 음식 단독, 동물 등)이 아니라면 항상 "isValidInBody": true로 설정하고 수치를 추출하세요.
+4. ★ 언어 강제 규칙 (중요):
+   - "title", "summary", "dietTip", "workoutTip" 등 모든 텍스트 결과는 반드시 100% 자연스럽고 전문적인 한국어(Korean)로만 작성해야 합니다. 영어를 절대 사용하지 마세요.
+   - summary: 종합 AI 진단 요약 (예: "체중 75.5kg, 골격근량 30.3kg, 체지방률 29.1%로 골격근량이 양호하여 유산소 및 식단 조절을 통한 체지방 감량이 권장됩니다.")
+   - dietTip: 맞춤 영양 식단 팁 (예: "기초대사량을 고려하여 단백질 100g 섭취와 규칙적인 저염식 식단을 추천합니다.")
+   - workoutTip: 맞춤 운동 트레이닝 팁 (예: "골격근량을 유지하며 체지방을 태울 수 있는 하체 복합 다관절 운동과 중강도 유산소를 병행하세요.")
 
-JSON SCHEMA (Output valid JSON only):
+JSON SCHEMA (반드시 유효한 JSON만 출력):
 {
   "isValidInBody": true,
   "weight": number,
@@ -112,12 +112,12 @@ JSON SCHEMA (Output valid JSON only):
   "height": number,
   "age": number,
   "gender": "male" | "female",
-  "measuredDate": string,
+  "measuredDate": "YYYY-MM-DD",
   "centerName": string,
-  "title": string,
-  "summary": string,
-  "dietTip": string,
-  "workoutTip": string
+  "title": "YYYY년 M월 D일 인바디 측정",
+  "summary": "한국어로 작성된 체성분 종합 AI 진단 요약",
+  "dietTip": "한국어로 작성된 맞춤형 식단 조언",
+  "workoutTip": "한국어로 작성된 맞춤형 운동 조언"
 }`;
 
     let responseText = '';

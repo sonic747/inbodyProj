@@ -670,7 +670,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
             setIsScanning(false);
             setScannedResult(record);
             addDebugLog('success', '인바디 수치 정상 인식 및 화면 렌더링 완료', {
-              recordSummary: `${record.measuredDate} | 체중: ${record.weight}kg | 골격근: ${record.skeletalMuscleMass}kg | 체지방: ${record.bodyFatPercentage}%`,
+              recordSummary: `${record.displayDate || record.date} | 체중: ${record.weight}kg | 골격근: ${record.skeletalMuscleMass}kg | 체지방: ${record.bodyFatPercentage}%`,
             });
             return;
           }
@@ -1563,7 +1563,7 @@ export const ScanView: React.FC<ScanViewProps> = ({
                   <span className="font-bold text-[#E2E4E9] text-xs">{scannedResult.bmr} kcal</span>
                 </div>
                 <div className="p-2 bg-[#161822] rounded-xl border border-[#2A2D35]">
-                  <span className="text-[9px] text-[#9CA3AF] block">인바디 점수</span>
+                  <span className="text-[9px] text-[#9CA3AF] block">신체발달점수</span>
                   <span className="font-bold text-[#F59E0B] text-xs">{scannedResult.inBodyScore || 82}점</span>
                 </div>
               </div>

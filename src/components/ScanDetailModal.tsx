@@ -116,7 +116,7 @@ export const ScanDetailModal: React.FC<ScanDetailModalProps> = ({
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-lg text-[#E2E4E9]">{record.title}</h3>
                 <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#F59E0B] to-[#D97706] text-black">
-                  인바디 {record.inBodyScore || 78}점
+                  신체발달점수 {record.inBodyScore || 78}점
                 </span>
               </div>
               <p className="text-xs text-[#9CA3AF]">측정 일시: {record.displayDate}</p>

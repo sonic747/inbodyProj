@@ -21,7 +21,7 @@ export interface InBodyRecord {
   waistHipRatio?: number; // (복부지방률)
   muscleControl?: number; // kg (적정 근육조절)
   fatControl?: number; // kg (적정 지방조절)
-  inBodyScore?: number; // 0-100 (신체발달점수 / 인바디 점수)
+  inBodyScore?: number; // 0-100 (신체발달점수)
   height?: number; // cm
   age?: number;
   gender?: 'male' | 'female' | string;
